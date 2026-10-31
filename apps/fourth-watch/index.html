@@ -53,6 +53,18 @@ const CONFIG = {
   WIDE_GUST_LEAD: 100,
   WALK_EXIT_SUDDEN_P: 0.9,
   WALK_EXIT_TELEGRAPH_S: 0.5,
+  // "Come": the wind flows on as always (same way, same speed), but its gusts are timed so that while He
+  // speaks the way from the bow straight up to Him comes clear. Stepping out of the boat at the bow while He
+  // speaks starts a run (Mt 14:29): no sudden gusts form on the way, the run goes on as long as each next
+  // step up comes within RUN_GAP_S, and from the last lane a step up reaches Him. Stopping or stepping aside
+  // ends it (and, as when he saw the wind, a sudden gust may come). Out on the sea, steps are ordinary.
+  RUN_GAP_S: 0.5,
+  RUN_STEP_S: 0.3,             // in a run he goes up at most a lane every RUN_STEP_S (a quicker tap waits its turn)
+  WAY_START_S: 2.5,            // the way is clear for a run that leaves the bow while the bubble shows,
+  WAY_PACE_S: 0.34,            // going up one lane every WAY_PACE_S or faster (three taps a second and a margin),
+  WAY_PRE_S: 0.1,              // and this much more at both ends
+  WAY_SPREAD_S: 0.4,           // held-back gusts come back up to this much later, so the wind does not return on a beat
+  WAY_EDGE_PX: 10,             // the way: Peter's body width plus this much on each side
   WALK_FADE_RADIUS: 60,        // gusts this close to Peter's column fade during a Word Walk
   WALK_FADE_ALPHA: 0.15,
   WORD_INTERVAL_RANGE: [8, 12],
@@ -65,9 +77,10 @@ const CONFIG = {
   VIGNETTE: [0.55, 0.72],
   PREWARM_S: 16,               // pre-simulate the wind so the sea is full when a turn starts
   SPAWN_MARGIN: 20,            // gusts enter and leave this far beyond the screen edge
-  // Touch (swipe) controls, in CSS px / seconds. "Next player" takes no touch for TURN_END_GRACE_S after
-  // it appears, so a student still tapping at 0:00 does not start the next turn by accident.
-  SWIPE_PX: 22, LOOK_PX: 40, TAP_S: 0.25, TURN_END_GRACE_S: 1.0,
+  // Touch (swipe) controls, in CSS px / seconds. A finger that comes down while He speaks and rests HOLD_S
+  // holds ↑. "Next player" takes no touch for TURN_END_GRACE_S after it appears, so a student still
+  // tapping at 0:00 does not start the next turn by accident.
+  SWIPE_PX: 22, LOOK_PX: 40, TAP_S: 0.25, HOLD_S: 0.25, TURN_END_GRACE_S: 1.0,
 };
 
 const TEXT = {
@@ -163,12 +176,12 @@ class Game {
     this.resetWorld();
   }
 
-  freshStats() { return { wordsHeard: 0, wordWalks: 0, sinks: 0, maxLane: 0, reached: false }; }
+  freshStats() { return { wordsHeard: 0, wordWalks: 0, sinks: 0, maxLane: 0, reached: false, comeRuns: 0 }; }
   on(fn) { this.listeners.push(fn); }
   emit(type, data) { for (let i = 0; i < this.listeners.length; i++) this.listeners[i](type, data || {}, this); }
 
   get diff() { return CONFIG.DIFFICULTY[this.diffIdx]; }
-  laneSpeed(n) { return CONFIG.LANE_SPEED[n - 1] * this.diff; }
+  laneSpeed(n) { return CONFIG.LANE_SPEED[n - 1] * CONFIG.DIFFICULTY[this.windIdx]; }   // fixed for the turn
   suddenP(n) { return n >= LANES ? 1 : clamp(CONFIG.SUDDEN_P[n - 1] * this.diff, 0, 1); }
   gap(n) {
     const a = CONFIG.GUST_GAP_S[0], b = CONFIG.GUST_GAP_S[1];
@@ -184,9 +197,11 @@ class Game {
     this.spawnEnabled = true;
     this.calmUntil = -1;
     this.calmMul = 1;
+    this.windIdx = this.diffIdx;   // a difficulty key changes the wind's speed from the next turn
     this.p = { col: 0, x: CX, y: laneY(0), lane: 0, stillT: 0, cooldownUntil: -1,
                trailA: 0, trailX: CX, trailTop: laneY(0) };
     this.arming = null;
+    this.run = null;               // a run up the middle way: { last } = the time of its latest step
     this.word = null;
     this.lastWordStart = null;
     this.nextWordAt = CONFIG.WORD_FIRST_AT_S;
@@ -194,6 +209,12 @@ class Game {
     this.sinkT = 0; this.respawnT = 0; this.reachT = 0; this.timeupT = 0;
     this.sinkLine = null; this.sinkFlags = null; this.sinkPos = null; this.reachFrom = null;
     this.vis = { wordGlow: 0, bubbleA: 0 };
+    // The gust clock (it stops while the wind does) and the ways planned on it: the first comes as He first
+    // speaks and the next an interval later, both planned now so the wind is timed for them from the start.
+    this.gt = 0;
+    this.ways = [];
+    this.planWay(CONFIG.PREWARM_S + CONFIG.WORD_FIRST_AT_S);
+    this.planWay(CONFIG.PREWARM_S + CONFIG.WORD_FIRST_AT_S + this.wordInterval);
     this.warm = true;
     const steps = Math.round(CONFIG.PREWARM_S * 30);
     for (let i = 0; i < steps; i++) this.updateGusts(1 / 30);
@@ -226,6 +247,7 @@ class Game {
     this.state = 'TIMEUP';
     this.timeupT = 0;
     this.arming = null;
+    this.run = null;
     this.tele = [];
     this.emit('timeUp', { text: TEXT.timeUp });
   }
@@ -253,7 +275,7 @@ class Game {
     if (code === 'Equal' || code === 'NumpadAdd' || key === '+') { this.setWordInterval(this.wordInterval + 1); return; }
     if (code === 'Minus' || code === 'NumpadSubtract' || key === '-') { this.setWordInterval(this.wordInterval - 1); return; }
     const di = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[code];
-    if (di !== undefined) { this.diffIdx = di; this.toast('Difficulty x' + CONFIG.DIFFICULTY[di]); return; }
+    if (di !== undefined) { this.diffIdx = di; this.toast('Difficulty x' + CONFIG.DIFFICULTY[di] + ' (wind: next turn)'); return; }
     if (code === 'ArrowUp' || code === 'ArrowDown' || code === 'ArrowLeft' || code === 'ArrowRight') this.onArrow(code);
   }
 
@@ -271,6 +293,14 @@ class Game {
     if (this.state === 'WORD_WALK') this.exitWalk('release');
   }
 
+  // A finger that came down while He speaks and rests there: ↑ is held without a step (a swipe up or the
+  // lift takes that step), and it arms exactly like the key pressed inside the window.
+  holdUp() {
+    if (this.held.ArrowUp) return;
+    this.held.ArrowUp = true;
+    if (this.state === 'PLAYING' && this.word && !this.arming) { this.arming = { t0: this.turnT }; this.emit('arm'); }
+  }
+
   onArrow(code) {
     const s = this.state;
     if (s === 'WORD_WALK') {
@@ -280,19 +310,90 @@ class Game {
     if (s !== 'PLAYING') return;
     if (code === 'ArrowUp') {
       if (this.word && !this.arming) { this.arming = { t0: this.turnT }; this.emit('arm'); }
+      // Stepping out of the boat at the bow while He speaks starts a run; in the run a step up goes on toward
+      // Him, and from the last lane it reaches Him. Out on the sea, steps up are ordinary steps.
+      if (this.p.col === 0 && (this.run || (this.word && this.p.lane === 0))) {
+        if (this.run && this.t < this.p.cooldownUntil - 1e-9) this.run.queued = true;   // a quick tap waits its turn
+        else this.runUp();
+        return;
+      }
       this.tryStep(0, 1);
     } else {
       this.arming = null;
       if (code === 'ArrowDown') this.tryStep(0, -1);
       else this.tryStep(code === 'ArrowLeft' ? -1 : 1, 0);
+      if (this.run) this.endRun('look');          // he looked at the wind
     }
+  }
+
+  // A step up along the open way; the first one (while He speaks) starts the run.
+  runStep() {
+    if (!this.run) { this.run = { last: this.turnT, queued: false }; this.stats.comeRuns++; this.emit('run', { lane: this.p.lane }); }
+    this.run.last = this.turnT;
+    this.run.queued = false;
+    this.p.cooldownUntil = Math.max(this.p.cooldownUntil, this.t + CONFIG.RUN_STEP_S);   // a steady walk
+  }
+  // The next step up on the way; from the last lane it reaches Him.
+  runUp() {
+    if (this.p.lane >= LANES) { this.reach(); return; }
+    if (this.tryStep(0, 1)) this.runStep();
+  }
+  // He stopped, or stepped aside: the way closes and, as when he saw the wind, a sudden gust may come at once.
+  endRun(reason) {
+    if (!this.run) return;
+    this.run = null;
+    const p = this.p;
+    if (p.lane >= 1 && (p.lane >= LANES || this.rng() < CONFIG.WALK_EXIT_SUDDEN_P)) this.addTele(p.lane, p.x, CONFIG.WALK_EXIT_TELEGRAPH_S);
+    this.emit('runEnd', { reason: reason, lane: p.lane });
+  }
+  // A way up the middle from the bow, clear of gust cores in each lane n from the moment a run that leaves
+  // as He speaks (at, on the gust clock) could be there until a run leaving as late as WAY_START_S, a lane
+  // every WAY_PACE_S, has gone through it (with WAY_PRE_S to spare at both ends).
+  planWay(at) {
+    const A = [], B = [];
+    for (let n = 1; n <= LANES; n++) {
+      A[n] = at + (n - 1) * CONFIG.RUN_STEP_S - CONFIG.WAY_PRE_S;      // a run reaches lane n no sooner
+      B[n] = at + CONFIG.WAY_START_S + n * CONFIG.WAY_PACE_S + CONFIG.WAY_PRE_S;
+    }
+    this.ways.push({ at: at, A: A, B: B, done: false });
+  }
+  // How long a gust entering lane n now takes until its core reaches the middle way, and until it has left it.
+  wayCross(n) {
+    const v = this.laneSpeed(n) * this.calmMul, dir = laneDir(n);
+    const hw = CONFIG.HITBOX_W / 2 + CONFIG.WAY_EDGE_PX;
+    const c = CONFIG.GUST_LEN[n - 1] * (1 + CONFIG.GUST_LEN_JITTER) * CONFIG.GUST_CORE_FRAC;   // the longest core
+    const xs = dir > 0 ? -CONFIG.SPAWN_MARGIN : CONFIG.W + CONFIG.SPAWN_MARGIN;
+    return [(dir > 0 ? CX - hw - xs : xs - (CX + hw)) / v, (dir > 0 ? CX + hw + c - xs : xs + c - (CX - hw)) / v];
+  }
+  // How long to hold back lane n's next gust so that its core does not cross the middle way while that must
+  // be clear (0: it can come now). Only the moment a gust enters, off screen, is chosen; once it is on its
+  // way it blows like every other gust.
+  holdSpawn(n) {
+    if (!this.ways.length || this.laneSpeed(n) * this.calmMul <= 0) return 0;
+    const [d0, d1] = this.wayCross(n);
+    let wait = 0;
+    for (const w of this.ways) {
+      const s = this.gt + wait;
+      if (s + d1 > w.A[n] && s + d0 < w.B[n]) wait = w.B[n] - d0 - this.gt;
+    }
+    return wait > 1e-9 ? wait + CONFIG.WAY_SPREAD_S * this.rng() : 0;   // back a little later, not on a beat
   }
 
   setWordInterval(v) {
     v = clamp(v, CONFIG.WORD_INTERVAL_RANGE[0], CONFIG.WORD_INTERVAL_RANGE[1]);
     this.wordInterval = v;
-    // Also during an open window: the next one moves at once (the 8 s minimum exceeds the window length).
-    if (this.lastWordStart !== null) this.nextWordAt = Math.max(this.turnT, this.lastWordStart + v);
+    // The next way is already timed into the wind; the one after it moves to the new interval if every gust
+    // already blowing will be clear of it by then (moving it later is always safe), else from the one after.
+    const up = this.ways.filter(x => !x.done);
+    if (up.length >= 2) {
+      const last = up[up.length - 1], at = up[up.length - 2].at + v;
+      let lead = 0;
+      for (let n = 1; n <= LANES; n++) lead = Math.max(lead, this.wayCross(n)[1]);
+      if (at >= last.at || at - CONFIG.WAY_PRE_S - this.gt >= lead) {
+        this.ways.splice(this.ways.indexOf(last), 1);
+        this.planWay(at);
+      }
+    }
     this.toast('Word interval ' + v + ' s');
   }
   toast(msg) { this.toastMsg = msg; this.toastT = this.t; }
@@ -312,7 +413,7 @@ class Game {
     p.stillT = 0;
     p.cooldownUntil = this.t + CONFIG.STEP_COOLDOWN_MS / 1000;
     if (lane > this.stats.maxLane) this.stats.maxLane = lane;
-    if (lane >= 1 && (entered || lane === LANES)) this.rollSudden(lane);
+    if (lane >= 1 && (entered || lane === LANES) && !(dy > 0 && col === 0 && this.run)) this.rollSudden(lane);   // none on the way
     this.emit('step', { lane: lane, col: col });
     return true;
   }
@@ -343,6 +444,7 @@ class Game {
   startWalk() {
     const p = this.p;
     this.arming = null;
+    this.run = null;
     this.state = 'WORD_WALK';
     this.stats.wordWalks++;
     this.tele = [];
@@ -369,6 +471,7 @@ class Game {
     this.state = 'REACHED';
     this.reachT = 0;
     this.arming = null;
+    this.run = null;
     this.tele = [];
     this.stats.reached = true;
     this.stats.maxLane = LANES;
@@ -380,6 +483,7 @@ class Game {
     this.state = 'SINKING';
     this.sinkT = 0;
     this.arming = null;
+    this.run = null;
     this.tele = [];
     this.stats.sinks++;
     this.sinkFlags = { cry: false, hand: false, line: false };
@@ -447,24 +551,35 @@ class Game {
 
   updateWord() {
     if (this.word && this.turnT >= this.word.end) { this.word = null; this.emit('wordClose'); }
+    // He speaks when the next planned way comes clear, if Peter is out on the sea (or walking); while he is
+    // sinking that one is missed. Each way that comes plans the next one an interval after the last.
+    const w = this.ways.find(x => !x.done);
+    if (!w || !isFinite(this.nextWordAt)) return;
+    if (this.gt < w.at) { this.nextWordAt = this.turnT + w.at - this.gt + Math.max(0, this.calmUntil - this.t); return; }
+    w.done = true;
+    this.planWay(this.ways[this.ways.length - 1].at + this.wordInterval);
     const s = this.state;
-    if (!this.word && this.turnT >= this.nextWordAt && (s === 'PLAYING' || s === 'WORD_WALK') &&
-        this.turnT < CONFIG.PLAYER_TIME_S) {
+    if (!this.word && (s === 'PLAYING' || s === 'WORD_WALK') && this.turnT < CONFIG.PLAYER_TIME_S) {
       this.word = { start: this.turnT, end: this.turnT + CONFIG.WORD_DURATION_S };
       this.lastWordStart = this.turnT;
-      this.nextWordAt = this.turnT + this.wordInterval;
       this.stats.wordsHeard++;
       this.emit('wordOpen');
     }
+    this.nextWordAt = this.turnT + this.ways.find(x => !x.done).at - this.gt;   // when He speaks next (debug view)
   }
 
   updatePlaying(dt) {
     const p = this.p;
-    if (this.turnT >= CONFIG.PLAYER_TIME_S && !this.arming) { this.toTimeUp(); return; }
+    if (this.turnT >= CONFIG.PLAYER_TIME_S && !this.arming && !this.run) { this.toTimeUp(); return; }
     if (this.arming) {
       if (!this.held.ArrowUp) this.arming = null;
       else if (this.turnT - this.arming.t0 >= CONFIG.WORD_HOLD_ARM_S - 1e-6) { this.startWalk(); return; }
     }
+    if (this.run && this.run.queued && this.t >= this.p.cooldownUntil - 1e-9) {        // a tap that waited its turn
+      this.runUp();
+      if (this.state !== 'PLAYING') return;
+    }
+    if (this.run && this.turnT - this.run.last > CONFIG.RUN_GAP_S + 1e-9) this.endRun('stop');   // he stopped
     if (this.arming) return;                       // stepping out: wind cannot touch him yet
     if (p.lane >= 1) {
       p.stillT += dt;
@@ -514,16 +629,21 @@ class Game {
     const s = this.state, p = this.p;
     const paused = this.t < this.calmUntil;
     if (!paused) {
+      this.gt += dt;
       if (this.spawnEnabled) {
         for (let n = 1; n <= LANES; n++) {
           this.laneTimer[n] -= dt;
-          if (this.laneTimer[n] <= 0) { this.spawnGust(n); this.laneTimer[n] += this.gap(n); }
+          if (this.laneTimer[n] > 0) continue;
+          const wait = this.holdSpawn(n);
+          if (wait > 0) this.laneTimer[n] = wait;        // it would cross the middle way while that must be clear
+          else { this.spawnGust(n); this.laneTimer[n] += this.gap(n); }
         }
       }
       for (let i = 0; i < this.gusts.length; i++) {
         const g = this.gusts[i];
         g.x += g.dir * this.laneSpeed(g.lane) * this.calmMul * dt;
       }
+      while (this.ways.length && this.ways[0].done && this.gt > this.ways[0].B[LANES] + 1) this.ways.shift();
       let w = 0;
       for (let i = 0; i < this.gusts.length; i++) {
         const g = this.gusts[i];
@@ -569,8 +689,9 @@ class Game {
 
 // ============================================================================
 // Touch gestures: a swipe is an arrow press and a tap is one step up. Swiping up and keeping the finger
-// down holds ↑; lifting it releases the key. A finger that rests without swiping presses nothing until it
-// lifts (then it is a tap). When a second finger touches, the newest one counts.
+// down holds ↑; lifting it releases the key. A finger that comes down while He speaks and stays there
+// holds ↑ too: on a touch screen that is pressing the key inside the window. Any other resting finger
+// presses nothing until it lifts (then it is a tap). When a second finger touches, the newest one counts.
 // ============================================================================
 class Gestures {
   constructor(game, cfg) {
@@ -578,6 +699,7 @@ class Gestures {
     this.SWIPE = cfg.SWIPE_PX;          // CSS px before a touch becomes a swipe
     this.LOOK = cfg.LOOK_PX;            // CSS px a held finger must travel sideways or down to press another arrow
     this.TAP = cfg.TAP_S;               // a finger cut short by a newer one still steps if it was down less than this
+    this.HOLD = cfg.HOLD_S;             // a finger that came down while He speaks holds ↑ once it has rested this long
     this.GRACE = cfg.TURN_END_GRACE_S;  // "Next player" takes no touch for this long after it appears
     this.g = null;
   }
@@ -609,18 +731,30 @@ class Gestures {
       this.g = { id: id, done: true };
       return true;
     }
-    this.g = { id: id, x0: x, y0: y, t0: t, ax: x, ay: y, code: null, done: false };
+    // inWord: the finger came down while He speaks (a fresh press inside the window).
+    this.g = { id: id, x0: x, y0: y, t0: t, x: x, y: y, ax: x, ay: y, code: null, resting: false, done: false,
+               inWord: s === 'PLAYING' && !!this.game.word };
     return true;
   }
   move(id, x, y) {
     const g = this.g;
     if (!g || g.id !== id || g.done) return;
-    if (!g.code) {
+    g.x = x; g.y = y;
+    if (g.resting && this.game.state !== 'PLAYING') g.resting = false;   // the walk has begun: an ordinary held ↑
+    if (!g.code || g.resting) {
       const dx = x - g.x0, dy = y - g.y0;
       if (Math.hypot(dx, dy) < this.SWIPE) return;
-      g.code = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'ArrowLeft' : 'ArrowRight') : (dy < 0 ? 'ArrowUp' : 'ArrowDown');
+      const c = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'ArrowLeft' : 'ArrowRight') : (dy < 0 ? 'ArrowUp' : 'ArrowDown');
       g.ax = x; g.ay = y;
-      this.press(g.code);
+      if (g.resting) {
+        // A finger resting since He spoke (↑ held, no step yet) now swipes: up takes the step and keeps ↑
+        // held; any other way lets go of ↑ first, so a hesitant dodge is still only a dodge.
+        g.resting = false;
+        if (c === 'ArrowUp') { this.game.onArrow('ArrowUp'); return; }
+        this.game.keyUp('ArrowUp');
+      }
+      g.code = c;
+      this.press(c);
       return;
     }
     if (g.code !== 'ArrowUp') return;
@@ -633,13 +767,23 @@ class Gestures {
     this.game.keyUp(c);
     g.ax = x; g.ay = y;
   }
+  // Called every frame: a finger that came down while He speaks and rests there now holds ↑ (no step).
+  tick(t) {
+    const g = this.g;
+    if (!g || g.done || g.code || !g.inWord || t - g.t0 < this.HOLD) return;
+    if (this.game.state !== 'PLAYING' || !this.game.word) { g.inWord = false; return; }   // too late: an ordinary rest
+    g.code = 'ArrowUp'; g.resting = true; g.ax = g.x; g.ay = g.y;
+    this.game.holdUp();
+  }
   up(id) {
     const g = this.g;
     if (!g || g.id !== id) return;
     this.g = null;
     if (g.done) return;
-    if (g.code) this.game.keyUp(g.code);
-    else this.tap();                    // lifted without swiping: one step up
+    if (!g.code) { this.tap(); return; }       // lifted without swiping: one step up
+    const s = this.game.state;
+    this.game.keyUp(g.code);
+    if (g.resting && s === 'PLAYING') this.tap();   // a rest that never became a walk is still a tap
   }
   cancel(id) {
     const g = this.g;
@@ -964,21 +1108,27 @@ function drawTelegraph(tl, t) {
 }
 
 function drawBoat() {
-  ctx.fillStyle = '#0a0a0d';
+  // Dark wood with a little moonlight on it: the boat reads on a projector without brightening the night
+  const hull = ctx.createLinearGradient(0, 648, 0, 697);
+  hull.addColorStop(0, '#36425a'); hull.addColorStop(1, '#171e2b');
+  ctx.fillStyle = hull;
   ctx.beginPath();
   ctx.moveTo(432, 648); ctx.lineTo(848, 648);
   ctx.bezierCurveTo(836, 672, 812, 696, 760, 697);
   ctx.lineTo(520, 697);
   ctx.bezierCurveTo(468, 696, 444, 672, 432, 648);
   ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = 'rgba(130,150,180,.10)'; ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(170,195,230,.30)'; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.strokeStyle = 'rgba(160,185,220,.16)'; ctx.lineWidth = 1;                  // a plank seam
+  ctx.beginPath(); ctx.moveTo(452, 668); ctx.lineTo(828, 668); ctx.stroke();
+  ctx.strokeStyle = 'rgba(210,225,248,.55)'; ctx.lineWidth = 2;                  // the moonlit gunwale
   ctx.beginPath(); ctx.moveTo(434, 648.5); ctx.lineTo(846, 648.5); ctx.stroke();
   // Mast and a stay
-  ctx.fillStyle = '#0c0c10'; ctx.fillRect(700, 565, 3, 83);
-  ctx.strokeStyle = 'rgba(140,150,170,.18)';
+  ctx.fillStyle = '#3c4860'; ctx.fillRect(700, 565, 3, 83);
+  ctx.strokeStyle = 'rgba(175,190,215,.40)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(702, 567); ctx.lineTo(785, 636); ctx.stroke();
   // Five disciples
-  ctx.fillStyle = '#0b0b0e';
+  ctx.fillStyle = '#2b3549';
   for (const x of [480, 520, 560, 750, 790]) {
     ctx.beginPath(); ctx.arc(x, 618, 6, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.moveTo(x - 5, 625); ctx.lineTo(x + 5, 625); ctx.lineTo(x + 7, 648); ctx.lineTo(x - 7, 648); ctx.closePath(); ctx.fill();
@@ -1111,7 +1261,7 @@ function drawTrail(p) {
 function drawPeter(g) {
   const p = g.p, s = g.state;
   if (s === 'SINKING') { drawSinkingPeter(g); return; }
-  const word = s === 'WORD_WALK' || s === 'REACHED';
+  const word = s === 'WORD_WALK' || s === 'REACHED' || !!g.run;   // he glows while he goes on the Word
   drawTrail(p);
   drawHalo(p.x, p.y, word);
   drawPeterBody(p.x, p.y, word, false);
@@ -1360,11 +1510,11 @@ function drawDebug(g, fps) {
   }
   const st = g.stats;
   const lines = [
-    'state ' + g.state + (g.arming ? ' (arming)' : ''),
+    'state ' + g.state + (g.arming ? ' (arming)' : '') + (g.run ? ' (run)' : ''),
     'turn ' + g.turnT.toFixed(1) + 's  next word ' + Math.max(0, g.nextWordAt - g.turnT).toFixed(1) + 's',
     'interval ' + g.wordInterval + 's  difficulty x' + g.diff,
     'still ' + p.stillT.toFixed(2) + 's  lane ' + p.lane + '  col ' + p.col,
-    'heard ' + st.wordsHeard + '  walks ' + st.wordWalks + '  sank ' + st.sinks + '  best ' + st.maxLane + (st.reached ? ' ✓' : ''),
+    'heard ' + st.wordsHeard + '  walks ' + st.wordWalks + '  runs ' + st.comeRuns + '  sank ' + st.sinks + '  best ' + st.maxLane + (st.reached ? ' ✓' : ''),
     'line ' + CONFIG.SINK_LINE + '  mute ' + (g.muted ? 'on' : 'off') + '  fps ' + fps.toFixed(0),
   ];
   ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(W - 330, 44, 324, 14 + lines.length * 16);
@@ -1539,7 +1689,7 @@ async function runSelfTest() {
     }
     if (r % 10 === 9) await yieldUI();
   }
-  check(1, 'Greedy dodging bot never reaches Jesus (' + RUNS + ' runs)', reachedRuns === 0,
+  check(1, 'Greedy dodging bot never reaches Jesus, Word on (' + RUNS + ' runs)', reachedRuns === 0,
         'reached ' + reachedRuns + '/' + RUNS + '; best-lane histogram [0..8] = ' + hist.join(','));
 
   // 1b: a human-like bot (0.3 s reaction, decides every 0.15 s) should usually get to lane 5 or higher
@@ -1555,7 +1705,7 @@ async function runSelfTest() {
     if (g.stats.maxLane >= 5) hUpper++;
     if (r % 10 === 9) await yieldUI();
   }
-  check('1b', 'Human-like bot regularly reaches lane 5 or higher, never Jesus', hReached === 0 && hUpper / RUNS >= 0.5,
+  check('1b', 'Human-like bot regularly reaches lane 5 or higher, never Jesus (Word on)', hReached === 0 && hUpper / RUNS >= 0.5,
         (100 * hUpper / RUNS).toFixed(0) + '% of turns reached lane ≥ 5; reached ' + hReached + '; histogram [0..8] = ' + hh.join(','));
 
   // 2: press-and-hold up at a Word window from the boat
@@ -1663,7 +1813,7 @@ async function runSelfTest() {
   for (let r = 0; r < 40; r++) {
     const g = make(6000 + r), rr = mulberry32(6500 + r);
     const bot = { key: null, rng: mulberry32(6800 + r) };
-    const cnt = { wordOpen: 0, walk: 0, sink: 0, reached: 0 };
+    const cnt = { wordOpen: 0, walk: 0, sink: 0, reached: 0, run: 0 };
     let maxSeen = 0;
     g.on((type, d) => {
       if (cnt[type] !== undefined) cnt[type]++;
@@ -1674,12 +1824,14 @@ async function runSelfTest() {
     g.keyDown('ArrowUp', false);
     until(g, x => x.state === 'REACHED', r % 2 ? 6 : 0.6 + 3.5 * rr());
     g.keyUp('ArrowUp');
+    g.nextWordAt = Infinity;                       // the bot plays on without the Word (and the open one ends)
+    if (g.word) g.word.end = g.turnT;
     let guard = 0;
     while (g.state !== 'TURN_END' && guard++ < 60 * 120) { botTick(g, bot); g.update(STEP); }
     const st = g.stats;
     if (cnt.walk > 0) walked7++;
     if (cnt.reached > 0) reached7++;
-    if (st.wordsHeard !== cnt.wordOpen || st.wordWalks !== cnt.walk || st.sinks !== cnt.sink ||
+    if (st.wordsHeard !== cnt.wordOpen || st.wordWalks !== cnt.walk || st.sinks !== cnt.sink || st.comeRuns !== cnt.run ||
         st.maxLane !== maxSeen || st.reached !== (cnt.reached > 0)) stats7OK = false;
   }
   const ok7 = statsOK && stats7OK && walked7 === 40 && reached7 === 20;
@@ -1709,7 +1861,7 @@ async function runSelfTest() {
   };
   const calm = g => { g.spawnEnabled = false; g.gusts = []; g.tele = []; };
   const n9 = 40;
-  let a9 = 0, b9 = 0, c9 = 0, d9 = 0, e9 = 0, f9 = 0, g9 = 0, h9 = 0, i9 = 0, t9lo = Infinity, t9hi = -Infinity;
+  let a9 = 0, b9 = 0, k9 = 0, c9 = 0, d9 = 0, e9 = 0, f9 = 0, g9 = 0, h9 = 0, i9 = 0, t9lo = Infinity, t9hi = -Infinity;
   for (let r = 0; r < n9; r++) {
     // a: swipe up from the boat while He speaks and keep the finger down
     const g = make(9500 + r), T = touch(g);
@@ -1721,15 +1873,36 @@ async function runSelfTest() {
     const dt = g.turnT - k0;
     t9lo = Math.min(t9lo, dt); t9hi = Math.max(t9hi, dt);
     if (g.state === 'REACHED' && Math.abs(dt - CONFIG.WORD_WALK_CROSS_S) <= 0.3) a9++;
-    // b: a finger resting while He speaks presses nothing; lifting it is one step up, never a walk
+    // b: a finger put down while He speaks and kept there walks to Jesus too (pressing and holding)
     const h = make(9700 + r), U = touch(h);
     until(h, x => !!x.word, 20);
+    U.adv(mulberry32(9650 + r)() * 1.8);
     U.G.down(1, 200, 500, U.clock());
-    U.adv(1.0);
-    const rested = h.state === 'PLAYING' && h.p.lane === 0 && !h.arming;
-    U.G.up(1);
-    U.adv(0.05);
-    if (rested && h.p.lane === 1 && h.stats.wordWalks === 0) b9++;
+    for (let i = 0; i < 600 && h.state !== 'REACHED' && h.state !== 'SINKING'; i++) U.adv(STEP);
+    if (h.state === 'REACHED' && h.stats.wordWalks === 1) b9++;
+    // k: while He speaks, a short rest then a lift is one step up and no walk, and a hesitant dodge
+    //    (rest, then swipe sideways) is only a dodge
+    const kk = make(9750 + r), KK = touch(kk);
+    calm(kk);
+    until(kk, x => !!x.word, 20);
+    KK.G.down(1, 200, 500, KK.clock()); KK.adv(0.45);
+    const held = !!kk.arming && kk.p.lane === 0;
+    KK.G.up(1); KK.adv(0.1);
+    const shortRest = held && kk.p.lane === 1 && kk.state === 'PLAYING';
+    KK.adv(0.2);
+    KK.G.down(2, 200, 500, KK.clock()); KK.adv(0.45);
+    KK.G.move(2, 175, 502); KK.G.move(2, 150, 504); KK.adv(0.1);
+    const dodged = kk.p.lane === 1 && kk.p.col === -1 && !kk.arming;
+    KK.G.up(2); KK.adv(0.6);
+    // ... and in a run from the bow, a step made by resting and then flicking up still counts
+    const kf = make(9760 + r), KF = touch(kf);
+    until(kf, x => !!x.word, 20);
+    for (let s = 0; s < 4; s++) { KF.tap(); KF.adv(s < 3 ? 0.25 : 0.02); }
+    KF.G.down(7, 200, 500, KF.clock()); KF.adv(0.27);               // rests: a hold forms, no step
+    KF.G.move(7, 200, 485); KF.G.move(7, 200, 470); KF.G.up(7);     // then flicks up: the fifth step
+    for (let s = 0; s < 14 && kf.state === 'PLAYING'; s++) { KF.tap(); KF.adv(0.25); }
+    KF.adv(1.0);
+    if (shortRest && dodged && kk.p.lane === 1 && kk.p.col === -1 && kk.stats.wordWalks === 0 && kf.state === 'REACHED') k9++;
     // c: taps and quick swipes during the windows never walk
     const k = make(9800 + r), V = touch(k);
     for (let i = 0; i < 300; i++) {
@@ -1738,12 +1911,18 @@ async function runSelfTest() {
       if (k.state === 'SINKING') V.adv(4.6);
     }
     c9 += k.stats.wordWalks;
-    // d: a swipe up held since before the window does not walk (like holding the key from before)
+    // d: a swipe up held since before the window, or a finger resting since before it, never walks
+    //    (like holding the key from before)
     const m = make(9900 + r), X = touch(m);
     until(m, x => x.turnT >= 3, 5);
     X.swipe(0, -60, true);
     X.adv(10);
     d9 += m.stats.wordWalks;
+    const m2 = make(9950 + r), X2 = touch(m2);
+    until(m2, x => x.turnT >= 3 + 2.9 * mulberry32(9960 + r)(), 6);
+    X2.G.down(1, 200, 500, X2.clock());
+    X2.adv(10);
+    d9 += m2.stats.wordWalks;
     // e: dragging sideways while walking is looking at the wind: the walk ends at once
     const q = make(10000 + r), Y = touch(q);
     until(q, x => !!x.word, 20);
@@ -1771,6 +1950,7 @@ async function runSelfTest() {
     // h: tapping on through 0:00 neither cuts "Time's up" short nor starts the next player at once
     const tu = make(10300 + r), TU = touch(tu);
     calm(tu);
+    tu.nextWordAt = Infinity;                      // no Word here: this is about the turn end
     tu.turnT = CONFIG.PLAYER_TIME_S - 0.3 - 0.1 * mulberry32(10350 + r)();
     let tUp = -1, tEnd = -1, tNext = -1, tid = 1;
     for (let i = 0; i < 900 && tNext < 0; i++) {     // a tap every 0.15 s, each with a new finger id
@@ -1783,8 +1963,8 @@ async function runSelfTest() {
     const upFor = tEnd - tUp, endFor = tNext - tEnd;
     if (tUp > 0 && Math.abs(upFor - CONFIG.TIMEUP_S) < 0.05 && endFor >= CONFIG.TURN_END_GRACE_S - 1e-6 &&
         endFor < CONFIG.TURN_END_GRACE_S + 0.2 && tu.playerNum === 2) h9++;
-    // i: a second finger: overlapping taps both step, a resting thumb does not lock out the other one
-    //    (and lifting it adds nothing), and a stray touch never ends a walk
+    // i: a second finger: overlapping taps both step (also while He speaks), a resting thumb does not lock
+    //    out the other one (and lifting it adds nothing), and a stray touch never ends a walk
     const two = make(10400 + r), TW = touch(two), G2 = TW.G;
     calm(two);
     G2.down(1, 100, 500, TW.clock()); TW.adv(0.15);
@@ -1796,20 +1976,176 @@ async function runSelfTest() {
     TW.swipe(0, -60, false, 4); TW.adv(0.2);
     G2.up(3); TW.adv(0.2);
     const gripOK = two.p.lane === 3;
+    const ow = make(10450 + r), OW = touch(ow), G3 = OW.G;
+    calm(ow);
+    until(ow, x => !!x.word, 20);
+    G3.down(1, 100, 500, OW.clock()); OW.adv(0.15);
+    G3.down(2, 300, 500, OW.clock()); OW.adv(0.05);
+    G3.up(1); OW.adv(0.1);
+    G3.up(2); OW.adv(0.2);
+    const overlapWordOK = ow.p.lane === 2 && ow.stats.wordWalks === 0;
     const wk = make(10500 + r), WK = touch(wk);
     until(wk, x => !!x.word, 20);
     WK.swipe(0, -60, true, 1); WK.adv(1.0);
     const walk9 = wk.state === 'WORD_WALK';
     WK.tap(2); WK.swipe(60, 0, false, 3); WK.adv(0.3);
-    if (overlapOK && gripOK && walk9 && wk.state === 'WORD_WALK') i9++;
+    if (overlapOK && gripOK && overlapWordOK && walk9 && wk.state === 'WORD_WALK') i9++;
     if (r % 10 === 9) await yieldUI();
   }
-  check(9, 'Swipe controls: swipe ↑ and hold reaches Jesus; taps and resting fingers do not; turn ends are not skipped',
-        a9 === n9 && b9 === n9 && c9 === 0 && d9 === 0 && e9 === n9 && f9 === n9 && g9 === n9 && h9 === n9 && i9 === n9,
-        'hold ' + a9 + '/' + n9 + ' (' + t9lo.toFixed(3) + '–' + t9hi.toFixed(3) + ' s), resting finger steps on lift ' + b9 + '/' + n9 +
-        ', walks from taps ' + c9 + ', from a swipe held before the window ' + d9 + ', look ends walk ' + e9 + '/' + n9 +
+  check(9, 'Swipe controls: swipe ↑ and hold, or press and hold while He speaks, reaches Jesus; taps and earlier rests do not; turn ends are not skipped',
+        a9 === n9 && b9 === n9 && k9 === n9 && c9 === 0 && d9 === 0 && e9 === n9 && f9 === n9 && g9 === n9 && h9 === n9 && i9 === n9,
+        'swipe and hold ' + a9 + '/' + n9 + ' (' + t9lo.toFixed(3) + '–' + t9hi.toFixed(3) + ' s), press and hold ' + b9 + '/' + n9 +
+        ', short rest = one step and hesitant dodge = dodge ' + k9 + '/' + n9 + ', walks from taps ' + c9 +
+        ', from a swipe or finger held before the window ' + d9 + ', look ends walk ' + e9 + '/' + n9 +
         ', title tap ' + f9 + '/' + n9 + ', one swipe one step ' + g9 + '/' + n9 + ', time-up kept ' + h9 + '/' + n9 +
         ', second finger ' + i9 + '/' + n9);
+
+  // 10: "Come": the wind flows on as always, yet while He speaks the way from the bow straight up to Him comes
+  //     clear; stepping out of the boat there and going up without stopping reaches Jesus. Stopping, stepping
+  //     aside, starting out on the sea or off the bow, or running without the Word does not.
+  const upTap = g => { g.keyDown('ArrowUp', false); g.keyUp('ArrowUp'); };
+  const tapEvery = (g, gap, secs, first) => {
+    let next = g.turnT + (first || 0);
+    for (let i = 0, n = Math.round(secs / STEP); i < n && g.state === 'PLAYING'; i++) {
+      if (g.turnT >= next - 1e-9) { upTap(g); next += gap; }
+      g.update(STEP);
+    }
+  };
+  const press = (g, code, key) => { g.keyDown(code, false, key); g.keyUp(code); };
+  const wordN = (g, k) => { for (let i = 0; i < k; i++) { until(g, x => !x.word, 20); until(g, x => !!x.word, 30); } };
+  let a10 = 0, q10 = 0, k10 = 0, b10 = 0, c10 = 0, cs10 = 0, d10 = 0, e10 = 0, f10 = 0, g10 = 0, h10 = 0, i10 = 0, j10 = 0;
+  for (let r = 0; r < 200; r++) {
+    const rr = mulberry32(12500 + r);
+    // a: from the bow, leaving at any moment while the bubble shows, tapping three to twelve times a second
+    const g = make(12000 + r);
+    until(g, x => !!x.word, 20);
+    const ws = g.word.start;
+    const off = rr() * (CONFIG.WORD_DURATION_S - 0.05);        // drawn once: any moment while the bubble shows
+    until(g, x => x.turnT >= ws + off, 3);
+    tapEvery(g, 0.08 + (1 / 3 - 0.08) * rr(), 9);
+    if (g.state === 'REACHED' && g.stats.comeRuns === 1 && g.stats.wordWalks === 0) a10++;
+    // a3: tapping as fast as one can, he still goes a lane every RUN_STEP_S, never quicker and never slower
+    const fq = make(12150 + r), steps = [];
+    fq.on((type) => { if (type === 'step') steps.push(fq.turnT); });
+    until(fq, x => !!x.word, 20);
+    tapEvery(fq, 0.06, 6);
+    let even = fq.state === 'REACHED' && steps.length === LANES;
+    for (let s = 1; s < steps.length; s++) {
+      const d = steps[s] - steps[s - 1];
+      if (d < CONFIG.RUN_STEP_S - 1e-6 || d > CONFIG.RUN_STEP_S + 2 * STEP + 1e-6) even = false;
+    }
+    if (even) q10++;
+    // a2: the slowest run the teacher is told about: leaving as the bubble ends, three steps a second
+    const sl = make(12100 + r);
+    until(sl, x => !!x.word, 20);
+    const ws2 = sl.word.start;
+    until(sl, x => x.turnT >= ws2 + CONFIG.WORD_DURATION_S - 0.04, 3);
+    tapEvery(sl, 1 / 3, 9);
+    if (sl.state === 'REACHED') k10++;
+    // b: already out on the middle column as He speaks: ordinary steps, no run, never through
+    const h = make(12200 + r);
+    until(h, x => !!x.word, 20);
+    const lane = 1 + Math.floor(rr() * LANES);
+    Object.assign(h.p, { lane: lane, col: 0, x: CX, y: laneY(lane), stillT: 0 });
+    tapEvery(h, CONFIG.WAY_PACE_S, 8, 0.05);
+    if (!h.stats.reached && h.stats.comeRuns === 0) b10++;
+    // c: stopping halfway (in lane 4) ends the run: he does not reach Jesus (and the wind usually comes)
+    const k = make(12400 + r);
+    let stopped = false;
+    k.on((type, d) => { if (type === 'runEnd' && d.reason === 'stop') stopped = true; });
+    until(k, x => !!x.word, 20);
+    for (let s = 0; s < 4; s++) { upTap(k); run(k, 0.25); }
+    run(k, 1.6);
+    if (stopped && !k.stats.reached) c10++;
+    if (k.stats.sinks > 0) cs10++;
+    // d: stepping aside mid-run ends it at once ("he saw the wind")
+    const q = make(12600 + r);
+    let looked = false;
+    q.on((type, d) => { if (type === 'runEnd' && d.reason === 'look') looked = true; });
+    until(q, x => !!x.word, 20);
+    for (let s = 0; s < 3; s++) { upTap(q); run(q, 0.25); }
+    press(q, 'ArrowLeft');
+    if (looked && !q.run) d10++;
+    // e: the same run without the Word never gets through (the last lane is guarded)
+    const o = make(12800 + r);
+    o.nextWordAt = Infinity;
+    for (let i = 0; i < 60 * 14 && o.state !== 'REACHED' && o.state !== 'TURN_END'; i++) {
+      if (o.state === 'PLAYING' && i % 15 === 0) upTap(o);
+      o.update(STEP);
+    }
+    if (!o.stats.reached) e10++;
+    // f: stepping out of the boat beside the bow while He speaks is no run: ordinary steps, never through
+    const f = make(13200 + r);
+    const side = (r % 2 ? 1 : -1) * CONFIG.BOAT_MAX_COL;
+    Object.assign(f.p, { col: side, x: colX(side) });
+    until(f, x => !!x.word, 20);
+    for (let i = 0; i < 60 * 10 && f.state !== 'REACHED' && f.state !== 'TURN_END'; i++) {
+      if (f.state === 'PLAYING' && i % 15 === 0) upTap(f);
+      f.update(STEP);
+    }
+    if (f.stats.comeRuns === 0 && !f.stats.reached) f10++;
+    // g: the wind flows as always: every gust moves exactly its lane's speed each tick (none slows, stops or
+    //    jumps), except while the wind has ceased after a respawn
+    const w = make(13000 + r);
+    let natural = true, seen = 0;
+    let prev = new Map(w.gusts.map(x => [x, x.x]));
+    for (let i = 0; i < 60 * 14; i++) {
+      if (w.word && w.state === 'PLAYING' && i % 15 === 0) upTap(w);
+      const still = w.t + STEP < w.calmUntil, cm = w.calmMul;
+      w.update(STEP);
+      for (const x of w.gusts) {
+        if (!prev.has(x)) continue;
+        const dx = x.x - prev.get(x), want = still ? 0 : x.dir * w.laneSpeed(x.lane) * cm * STEP;
+        seen++;
+        if (Math.abs(dx - want) > 1e-6) natural = false;
+      }
+      prev = new Map(w.gusts.map(x => [x, x.x]));
+    }
+    if (natural && seen > 0) g10++;
+    // h: while He speaks, no gust crosses the way up from the bow in a lane while a run could be in it
+    const m = make(13400 + r);
+    until(m, x => !!x.word, 20);
+    const st = m.word.start, hw = CONFIG.HITBOX_W / 2, cd = CONFIG.RUN_STEP_S;
+    let crossed = false;
+    for (let i = 0; i < 60 * 6; i++) {
+      m.update(STEP);
+      for (const x of m.gusts) {
+        const since = m.turnT - st;
+        if (since < (x.lane - 1) * cd || since > CONFIG.WAY_START_S + x.lane * CONFIG.WAY_PACE_S) continue;
+        const c = coreSpan(x);
+        if (c[1] >= CX - hw && c[0] <= CX + hw) crossed = true;
+      }
+    }
+    if (!crossed) h10++;
+    // i: a difficulty key pressed before a later Word does not spoil that Word's way (the wind changes next turn)
+    const dk = make(13600 + r);
+    const keyAt = 1 + 10 * rr();
+    until(dk, x => x.turnT >= keyAt, 12);
+    press(dk, ['Digit1', 'Digit3'][r % 2], ['1', '3'][r % 2]);
+    wordN(dk, 1);
+    if (!dk.word) wordN(dk, 1);
+    tapEvery(dk, 0.25, 9, 0.3);
+    if (dk.state === 'REACHED') i10++;
+    // j: the Word interval turned down just before He speaks does not spoil the Word after next
+    const iv = make(13800 + r);
+    press(iv, 'Minus', '-');                                   // 10 -> 9 s, early: the way after next moves
+    until(iv, x => !!x.word, 20);
+    until(iv, x => !x.word, 5);
+    const w2 = iv.ways.find(x => !x.done), early = 0.05 + 0.3 * rr();
+    until(iv, x => x.gt >= w2.at - early, 15);
+    press(iv, 'Minus', '-');                                   // 9 -> 8 s, just before the second Word
+    wordN(iv, 2);
+    tapEvery(iv, 0.2, 9);                                      // out of the boat as He speaks
+    if (iv.state === 'REACHED') j10++;
+    if (r % 20 === 19) await yieldUI();
+  }
+  check(10, '"Come": the wind flows as always, yet while He speaks the way from the bow comes clear; stepping out and going up without stopping reaches Jesus, nothing else does',
+        a10 === 200 && q10 === 200 && k10 === 200 && b10 === 200 && c10 === 200 && d10 === 200 && e10 === 200 && f10 === 200 && g10 === 200 && h10 === 200 &&
+        i10 === 200 && j10 === 200,
+        'run from the bow ' + a10 + '/200, steady when tapping fast ' + q10 + '/200, slowest promised run ' + k10 + '/200, out on the sea never ' + b10 + '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 +
+        '), stepping aside ends it ' + d10 + '/200, never through without the Word ' + e10 + '/200, beside the bow never ' + f10 +
+        '/200, wind flows as always ' + g10 + '/200, way clear while He speaks ' + h10 + '/200, after a difficulty key ' + i10 +
+        '/200, after a late interval key ' + j10 + '/200');
 
   const pass = results.every(x => x.pass);
   log(pass ? 'ALL PASS' : 'SOME CHECKS FAILED', '(' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)');
@@ -1938,6 +2274,7 @@ function frame(now) {
   if (dt > 0) fps = fps * 0.95 + (1 / dt) * 0.05;
   if (dt > 0.25) dt = 0.25;
   acc += dt;
+  gestures.tick(now / 1000);
   let n = 0;
   while (acc >= STEP && n < 20) { game.update(STEP); acc -= STEP; n++; }
   Sound.update();
