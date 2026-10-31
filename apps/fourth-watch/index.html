@@ -65,8 +65,9 @@ const CONFIG = {
   VIGNETTE: [0.55, 0.72],
   PREWARM_S: 16,               // pre-simulate the wind so the sea is full when a turn starts
   SPAWN_MARGIN: 20,            // gusts enter and leave this far beyond the screen edge
-  // Touch (swipe) controls, in CSS px / seconds
-  SWIPE_PX: 22, LOOK_PX: 40, STILL_PX: 10, LONG_PRESS_S: 0.28,
+  // Touch (swipe) controls, in CSS px / seconds. "Next player" takes no touch for TURN_END_GRACE_S after
+  // it appears, so a student still tapping at 0:00 does not start the next turn by accident.
+  SWIPE_PX: 22, LOOK_PX: 40, TAP_S: 0.25, TURN_END_GRACE_S: 1.0,
 };
 
 const TEXT = {
@@ -76,6 +77,8 @@ const TEXT = {
   tagline: '배에서 예수님께로 건너가세요 · Cross from the boat to Jesus',
   start: 'Enter ▶ 시작 · Start',
   hint: '← ↑ → 이동 · Arrow keys',
+  startTouch: '탭하여 시작 · Tap to start',     // shown instead on touch-only tablets
+  hintTouch: '스와이프로 이동 · Swipe to move',
   wordKo: '오라',
   wordEn: 'Come',
   cryKo: '주여, 나를 구원하소서!',
@@ -110,11 +113,11 @@ function mulberry32(a) {
 }
 
 const LANES = CONFIG.LANES;
-const SEA_BOTTOM = CONFIG.TOP_H + LANES * CONFIG.LANE_H;       // 630
-const CX = CONFIG.W / 2;                                         // 640, Jesus and the bow
+const SEA_BOTTOM = CONFIG.TOP_H + LANES * CONFIG.LANE_H;       // lower edge of the sea; the boat is below
+const CX = CONFIG.W / 2;                                         // Jesus and the bow
 // COLS positions centred on the bow (16 has no centre column, so it gives 15), capped to stay on screen.
 const MAX_COL = Math.min(Math.floor((CONFIG.COLS - 1) / 2),
-                         Math.floor((CX - CONFIG.COL_W / 2) / CONFIG.COL_W));   // 7 -> x in [80, 1200]
+                         Math.floor((CX - CONFIG.COL_W / 2) / CONFIG.COL_W));   // keyboard 7, phone 3
 
 function laneTop(n) { return SEA_BOTTOM - n * CONFIG.LANE_H; }
 function laneY(n) { return n <= 0 ? CONFIG.BOAT_Y : laneTop(n) + CONFIG.LANE_H / 2; }
@@ -153,6 +156,7 @@ class Game {
     this.muted = false;
     this.toastMsg = ''; this.toastT = -10;
     this.t = 0;
+    this.turnEndT = -Infinity;     // when "Next player" last appeared
     this.held = Object.create(null);
     this.state = 'TITLE';
     this.stats = this.freshStats();
@@ -213,6 +217,7 @@ class Game {
   }
   toTurnEnd() {
     this.state = 'TURN_END';
+    this.turnEndT = this.t;
     this.arming = null;
     this.resetWorld();
     this.emit('turnEnd', { stats: Object.assign({}, this.stats) });
@@ -563,41 +568,56 @@ class Game {
 }
 
 // ============================================================================
-// Touch gestures: a swipe is an arrow press, a short tap is one step up, and a finger that stays
-// still counts as holding ↑. Lifting the finger releases the key. One finger at a time.
+// Touch gestures: a swipe is an arrow press and a tap is one step up. Swiping up and keeping the finger
+// down holds ↑; lifting it releases the key. A finger that rests without swiping presses nothing until it
+// lifts (then it is a tap). When a second finger touches, the newest one counts.
 // ============================================================================
 class Gestures {
   constructor(game, cfg) {
     this.game = game;
-    this.SWIPE = cfg.SWIPE_PX;      // CSS px before a touch becomes a swipe
-    this.LOOK = cfg.LOOK_PX;        // CSS px a held finger must travel sideways or down to press another arrow
-    this.STILL = cfg.STILL_PX;      // a long press must stay within this radius
-    this.LONG = cfg.LONG_PRESS_S;   // seconds before a still finger counts as holding ↑
+    this.SWIPE = cfg.SWIPE_PX;          // CSS px before a touch becomes a swipe
+    this.LOOK = cfg.LOOK_PX;            // CSS px a held finger must travel sideways or down to press another arrow
+    this.TAP = cfg.TAP_S;               // a finger cut short by a newer one still steps if it was down less than this
+    this.GRACE = cfg.TURN_END_GRACE_S;  // "Next player" takes no touch for this long after it appears
     this.g = null;
   }
   press(code) { this.game.keyDown(code, false, code); }
+  tap() { this.press('ArrowUp'); this.game.keyUp('ArrowUp'); }
   // Returns true when the touch was taken (the caller then prevents the browser default).
   down(id, x, y, t) {
-    if (this.g && this.g.id === id) this.cancel(id);   // its release was missed (e.g. outside the window)
-    if (this.g) return false;
+    const old = this.g;
+    if (old) {
+      // A second finger never breaks a walk, or the moment before one.
+      if (old.id !== id && !old.done && (this.game.state === 'WORD_WALK' || this.game.arming)) return false;
+      // Otherwise the new finger takes over, as if the old one had lifted: a held arrow is released, a quick
+      // tap still in progress keeps its step, and a resting thumb is dropped quietly. The same id again
+      // means its release was missed, so nothing steps.
+      this.g = null;
+      if (!old.done) {
+        if (old.code) this.game.keyUp(old.code);
+        else if (old.id !== id && t - old.t0 < this.TAP) this.tap();
+      }
+    }
     const s = this.game.state;
     if (s === 'TITLE' || s === 'TURN_END' || s === 'TIMEUP') {
-      // Starts or continues; this touch is used up, so lifting it never steps.
-      this.game.keyDown('Enter', false, 'Enter');
-      this.game.keyUp('Enter');
+      // This touch is used up, so lifting it never steps. "Time's up" runs its course, and taps carried
+      // over from the turn do not start the next player before the screen has been seen.
+      if (s === 'TITLE' || (s === 'TURN_END' && this.game.t - this.game.turnEndT >= this.GRACE)) {
+        this.game.keyDown('Enter', false, 'Enter');
+        this.game.keyUp('Enter');
+      }
       this.g = { id: id, done: true };
       return true;
     }
-    this.g = { id: id, x0: x, y0: y, t0: t, ax: x, ay: y, code: null, still: true, done: false };
+    this.g = { id: id, x0: x, y0: y, t0: t, ax: x, ay: y, code: null, done: false };
     return true;
   }
   move(id, x, y) {
     const g = this.g;
     if (!g || g.id !== id || g.done) return;
     if (!g.code) {
-      const dx = x - g.x0, dy = y - g.y0, d = Math.hypot(dx, dy);
-      if (d > this.STILL) g.still = false;
-      if (d < this.SWIPE) return;
+      const dx = x - g.x0, dy = y - g.y0;
+      if (Math.hypot(dx, dy) < this.SWIPE) return;
       g.code = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'ArrowLeft' : 'ArrowRight') : (dy < 0 ? 'ArrowUp' : 'ArrowDown');
       g.ax = x; g.ay = y;
       this.press(g.code);
@@ -613,21 +633,13 @@ class Gestures {
     this.game.keyUp(c);
     g.ax = x; g.ay = y;
   }
-  // Called every frame: a finger held still long enough becomes a held ↑.
-  tick(t) {
-    const g = this.g;
-    if (!g || g.done || g.code || !g.still || t - g.t0 < this.LONG) return;
-    g.code = 'ArrowUp';
-    g.ax = g.x0; g.ay = g.y0;
-    this.press('ArrowUp');
-  }
   up(id) {
     const g = this.g;
     if (!g || g.id !== id) return;
     this.g = null;
     if (g.done) return;
-    if (!g.code) { this.press('ArrowUp'); this.game.keyUp('ArrowUp'); return; }   // a tap: one step up
-    this.game.keyUp(g.code);
+    if (g.code) this.game.keyUp(g.code);
+    else this.tap();                    // lifted without swiping: one step up
   }
   cancel(id) {
     const g = this.g;
@@ -672,7 +684,7 @@ function makeNoise(c, seconds, kind) {
 const Sound = {
   ctx: null, master: null, windBus: null, pink: null, brown: null, layers: null,
   muted: false, lastWhoosh: 0, voices: 0,
-  MASTER: 0.9,
+  MASTER: 1.25,                 // overall level; only rare overlapping peaks reach the soft clipper
   // Builds the graph on the first user gesture; level is the sea level for the current state.
   unlock(level) {
     if (this.ctx) { this.resume(); return; }
@@ -706,15 +718,16 @@ const Sound = {
     // Two independent surf layers, slightly left and right
     this.layers = [this.surf(-0.35, 0.4), this.surf(0.35, 0.34)];
     this.update();
+    this.resume();                // some browsers create it suspended, even inside a tap
   },
   // One surf layer: pink noise, high-passed (no boom), then two soft low-pass filters (no hiss)
   // whose cutoff and level swell with every wave.
   surf(pan, level) {
     const c = this.ctx;
     const src = c.createBufferSource(); src.buffer = this.pink; src.loop = true;
-    const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 260; hp.Q.value = -3;
+    const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 320; hp.Q.value = -3;
     const f1 = c.createBiquadFilter(), f2 = c.createBiquadFilter();
-    for (const f of [f1, f2]) { f.type = 'lowpass'; f.Q.value = -3; f.frequency.value = 420; }
+    for (const f of [f1, f2]) { f.type = 'lowpass'; f.Q.value = -3; f.frequency.value = 520; }
     const g = c.createGain(); g.gain.value = level * 0.4;
     src.connect(hp); hp.connect(f1); f1.connect(f2); f2.connect(g);
     let out = g;
@@ -736,8 +749,8 @@ const Sound = {
         L.g.gain.setTargetAtTime(L.level * crest, t, rise / 3);
         L.g.gain.setTargetAtTime(L.level * 0.4, t + rise, fall / 3);
         for (const f of L.f) {
-          f.frequency.setTargetAtTime(420 + 900 * crest, t, rise / 3);
-          f.frequency.setTargetAtTime(420, t + rise, fall / 3);
+          f.frequency.setTargetAtTime(520 + 900 * crest, t, rise / 3);
+          f.frequency.setTargetAtTime(520, t + rise, fall / 3);
         }
         L.next = t + rise + fall * (0.5 + Math.random() * 0.4);
       }
@@ -745,12 +758,14 @@ const Sound = {
   },
   suspend() { if (this.ctx && this.ctx.state === 'running') quiet(this.ctx.suspend()); },
   resume() { if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed') quiet(this.ctx.resume()); },
+  // One-off sounds start only while the context runs; a suspended or interrupted one would pile them up.
+  live() { const c = this.ctx; return !!c && (!c.state || c.state === 'running'); },
   setWind(level) { if (this.ctx) this.windBus.gain.setTargetAtTime(level, this.ctx.currentTime, 0.4); },
   setMuted(m) { this.muted = m; if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : this.MASTER, this.ctx.currentTime, 0.05); },
   // A soft swish when a gust passes close by: band-passed pink noise, no hiss above ~1.5 kHz.
   whoosh(x) {
     const c = this.ctx;
-    if (!c || this.voices >= 3) return;
+    if (!this.live() || this.voices >= 3) return;
     const t0 = c.currentTime;
     if (t0 - this.lastWhoosh < 0.22) return;
     this.lastWhoosh = t0;
@@ -779,7 +794,7 @@ const Sound = {
   // Falling into the water: a low, soft plunge (every onset ramps, so nothing clicks).
   splash() {
     const c = this.ctx;
-    if (!c) return;
+    if (!this.live()) return;
     const t0 = c.currentTime;
     const src = c.createBufferSource(); src.buffer = this.brown;
     const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = -3;
@@ -1683,16 +1698,18 @@ async function runSelfTest() {
   const touch = g => {
     const G = new Gestures(g, CONFIG);
     let clock = 100;
-    const adv = s => { for (let i = 0, n = Math.round(s / STEP); i < n; i++) { clock += STEP; G.tick(clock); g.update(STEP); } };
-    const swipe = (dx, dy, hold) => {
-      G.down(1, 200, 500, clock); G.move(1, 200 + dx / 2, 500 + dy / 2); G.move(1, 200 + dx, 500 + dy);
-      if (!hold) G.up(1);
+    const adv = s => { for (let i = 0, n = Math.round(s / STEP); i < n; i++) { clock += STEP; if (G.tick) G.tick(clock); g.update(STEP); } };
+    const swipe = (dx, dy, hold, id) => {
+      id = id || 1;
+      G.down(id, 200, 500, clock); G.move(id, 200 + dx / 2, 500 + dy / 2); G.move(id, 200 + dx, 500 + dy);
+      if (!hold) G.up(id);
     };
-    const tap = () => { G.down(1, 200, 500, clock); G.up(1); };
+    const tap = id => { G.down(id || 1, 200, 500, clock); G.up(id || 1); };
     return { G: G, adv: adv, swipe: swipe, tap: tap, clock: () => clock };
   };
+  const calm = g => { g.spawnEnabled = false; g.gusts = []; g.tele = []; };
   const n9 = 40;
-  let a9 = 0, b9 = 0, c9 = 0, d9 = 0, e9 = 0, f9 = 0, g9 = 0, t9lo = Infinity, t9hi = -Infinity;
+  let a9 = 0, b9 = 0, c9 = 0, d9 = 0, e9 = 0, f9 = 0, g9 = 0, h9 = 0, i9 = 0, t9lo = Infinity, t9hi = -Infinity;
   for (let r = 0; r < n9; r++) {
     // a: swipe up from the boat while He speaks and keep the finger down
     const g = make(9500 + r), T = touch(g);
@@ -1704,12 +1721,15 @@ async function runSelfTest() {
     const dt = g.turnT - k0;
     t9lo = Math.min(t9lo, dt); t9hi = Math.max(t9hi, dt);
     if (g.state === 'REACHED' && Math.abs(dt - CONFIG.WORD_WALK_CROSS_S) <= 0.3) a9++;
-    // b: a finger pressed and held still while He speaks also walks
+    // b: a finger resting while He speaks presses nothing; lifting it is one step up, never a walk
     const h = make(9700 + r), U = touch(h);
     until(h, x => !!x.word, 20);
     U.G.down(1, 200, 500, U.clock());
-    U.adv(6);
-    if (h.stats.reached) b9++;
+    U.adv(1.0);
+    const rested = h.state === 'PLAYING' && h.p.lane === 0 && !h.arming;
+    U.G.up(1);
+    U.adv(0.05);
+    if (rested && h.p.lane === 1 && h.stats.wordWalks === 0) b9++;
     // c: taps and quick swipes during the windows never walk
     const k = make(9800 + r), V = touch(k);
     for (let i = 0; i < 300; i++) {
@@ -1718,10 +1738,10 @@ async function runSelfTest() {
       if (k.state === 'SINKING') V.adv(4.6);
     }
     c9 += k.stats.wordWalks;
-    // d: a finger resting since before the window does not walk
+    // d: a swipe up held since before the window does not walk (like holding the key from before)
     const m = make(9900 + r), X = touch(m);
     until(m, x => x.turnT >= 3, 5);
-    X.G.down(1, 200, 500, X.clock());
+    X.swipe(0, -60, true);
     X.adv(10);
     d9 += m.stats.wordWalks;
     // e: dragging sideways while walking is looking at the wind: the walk ends at once
@@ -1739,7 +1759,7 @@ async function runSelfTest() {
     if (tg.state === 'PLAYING' && tg.p.lane === 0) f9++;
     // g: one swipe is one step; a tap is one step up
     const s0 = make(10200 + r), S = touch(s0);
-    s0.spawnEnabled = false; s0.gusts = []; s0.tele = [];
+    calm(s0);
     S.swipe(0, -50, false); S.adv(0.2);
     const l1 = s0.p.lane;
     S.swipe(50, 0, false); S.adv(0.2);
@@ -1748,11 +1768,48 @@ async function runSelfTest() {
     const l0 = s0.p.lane;
     S.tap(); S.adv(0.2);
     if (l1 === 1 && c1 === 1 && l0 === 0 && s0.p.lane === 1) g9++;
+    // h: tapping on through 0:00 neither cuts "Time's up" short nor starts the next player at once
+    const tu = make(10300 + r), TU = touch(tu);
+    calm(tu);
+    tu.turnT = CONFIG.PLAYER_TIME_S - 0.3 - 0.1 * mulberry32(10350 + r)();
+    let tUp = -1, tEnd = -1, tNext = -1, tid = 1;
+    for (let i = 0; i < 900 && tNext < 0; i++) {     // a tap every 0.15 s, each with a new finger id
+      if (i % 9 === 0) TU.tap(++tid);
+      TU.adv(STEP);
+      if (tUp < 0 && tu.state === 'TIMEUP') tUp = tu.t;
+      if (tEnd < 0 && tu.state === 'TURN_END') tEnd = tu.t;
+      if (tNext < 0 && tu.playerNum === 2 && tu.state === 'PLAYING') tNext = tu.t;
+    }
+    const upFor = tEnd - tUp, endFor = tNext - tEnd;
+    if (tUp > 0 && Math.abs(upFor - CONFIG.TIMEUP_S) < 0.05 && endFor >= CONFIG.TURN_END_GRACE_S - 1e-6 &&
+        endFor < CONFIG.TURN_END_GRACE_S + 0.2 && tu.playerNum === 2) h9++;
+    // i: a second finger: overlapping taps both step, a resting thumb does not lock out the other one
+    //    (and lifting it adds nothing), and a stray touch never ends a walk
+    const two = make(10400 + r), TW = touch(two), G2 = TW.G;
+    calm(two);
+    G2.down(1, 100, 500, TW.clock()); TW.adv(0.15);
+    G2.down(2, 300, 500, TW.clock()); TW.adv(0.05);
+    G2.up(1); TW.adv(0.1);
+    G2.up(2); TW.adv(0.2);
+    const overlapOK = two.p.lane === 2;
+    G2.down(3, 20, 500, TW.clock()); TW.adv(1.0);
+    TW.swipe(0, -60, false, 4); TW.adv(0.2);
+    G2.up(3); TW.adv(0.2);
+    const gripOK = two.p.lane === 3;
+    const wk = make(10500 + r), WK = touch(wk);
+    until(wk, x => !!x.word, 20);
+    WK.swipe(0, -60, true, 1); WK.adv(1.0);
+    const walk9 = wk.state === 'WORD_WALK';
+    WK.tap(2); WK.swipe(60, 0, false, 3); WK.adv(0.3);
+    if (overlapOK && gripOK && walk9 && wk.state === 'WORD_WALK') i9++;
     if (r % 10 === 9) await yieldUI();
   }
-  check(9, 'Swipe controls: swipe ↑ and hold reaches Jesus; taps and resting fingers do not', a9 === n9 && b9 === n9 && c9 === 0 && d9 === 0 && e9 === n9 && f9 === n9 && g9 === n9,
-        'hold ' + a9 + '/' + n9 + ' (' + t9lo.toFixed(3) + '–' + t9hi.toFixed(3) + ' s), still press ' + b9 + '/' + n9 + ', walks from taps ' + c9 +
-        ', from a resting finger ' + d9 + ', look ends walk ' + e9 + '/' + n9 + ', title tap ' + f9 + '/' + n9 + ', one swipe one step ' + g9 + '/' + n9);
+  check(9, 'Swipe controls: swipe ↑ and hold reaches Jesus; taps and resting fingers do not; turn ends are not skipped',
+        a9 === n9 && b9 === n9 && c9 === 0 && d9 === 0 && e9 === n9 && f9 === n9 && g9 === n9 && h9 === n9 && i9 === n9,
+        'hold ' + a9 + '/' + n9 + ' (' + t9lo.toFixed(3) + '–' + t9hi.toFixed(3) + ' s), resting finger steps on lift ' + b9 + '/' + n9 +
+        ', walks from taps ' + c9 + ', from a swipe held before the window ' + d9 + ', look ends walk ' + e9 + '/' + n9 +
+        ', title tap ' + f9 + '/' + n9 + ', one swipe one step ' + g9 + '/' + n9 + ', time-up kept ' + h9 + '/' + n9 +
+        ', second finger ' + i9 + '/' + n9);
 
   const pass = results.every(x => x.pass);
   log(pass ? 'ALL PASS' : 'SOME CHECKS FAILED', '(' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)');
@@ -1815,7 +1872,7 @@ window.addEventListener('keyup', e => {
 });
 window.addEventListener('blur', () => { gestures.cancel(); game.releaseAll(); });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { game.releaseAll(); Sound.suspend(); }   // no storm noise behind the slides
+  if (document.hidden) { gestures.cancel(); game.releaseAll(); Sound.suspend(); }   // no storm noise behind the slides
   else Sound.resume();
 });
 canvas.addEventListener('pointerdown', e => {
@@ -1830,17 +1887,46 @@ canvas.addEventListener('pointerdown', e => {
 const TOUCHY = { touch: 1, pen: 1 };
 const gestures = new Gestures(game, CONFIG);
 const nowS = () => performance.now() / 1000;
+// On a touch-only tablet the on-screen words switch from keys to taps and swipes at the first touch.
+const TOUCH_ONLY = !(window.matchMedia && matchMedia('(any-pointer: fine)').matches);
+let touchy = false;
 window.addEventListener('pointerdown', e => {
-  if (TOUCHY[e.pointerType] && gestures.down(e.pointerId, e.clientX, e.clientY, nowS())) e.preventDefault();
+  touchy = !!TOUCHY[e.pointerType];
+  if (!touchy) return;
+  if (TOUCH_ONLY) { TEXT.start = TEXT.startTouch; TEXT.hint = TEXT.hintTouch; }
+  if (gestures.down(e.pointerId, e.clientX, e.clientY, nowS())) e.preventDefault();
 }, { passive: false });
 window.addEventListener('pointermove', e => { if (TOUCHY[e.pointerType]) gestures.move(e.pointerId, e.clientX, e.clientY); });
-window.addEventListener('pointerup', e => { if (TOUCHY[e.pointerType]) gestures.up(e.pointerId); });
+window.addEventListener('pointerup', e => {
+  if (!TOUCHY[e.pointerType]) return;
+  gestures.up(e.pointerId);
+  guardBack();
+});
 window.addEventListener('pointercancel', e => gestures.cancel(e.pointerId));
-// iOS: no pinch-zoom or double-tap zoom under a swipe
+// No pinch or double-tap zoom under a swipe (iOS), and no press-and-hold menu for a finger (Windows, Android)
 document.addEventListener('gesturestart', e => e.preventDefault());
 document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
-// Touch grants user activation only on release, so audio starts on pointerup (mouse is still active then).
+document.addEventListener('contextmenu', e => { if (touchy) e.preventDefault(); });
+// Touch grants user activation only on release, so audio starts on pointerup (mouse is still active then);
+// iOS may need touchend itself.
 window.addEventListener('pointerup', () => { if (!SELFTEST) Sound.unlock(windLevel(game.state)); });
+document.addEventListener('touchend', () => { if (!SELFTEST) Sound.unlock(windLevel(game.state)); }, { passive: true });
+// A swipe from the screen edge (Safari's swipe back) during a turn should not leave the game: the first
+// Back is caught; a second one within 2 s, or Back between turns, leaves as usual. Pushed on a release,
+// which counts as a user action, so the browser keeps the entry.
+let guarded = false, backAt = -1e9;
+function guardBack() {
+  if (SELFTEST || guarded || game.state === 'TITLE') return;
+  guarded = true;
+  history.pushState({ fw: 1 }, '');
+}
+window.addEventListener('popstate', () => {
+  guarded = false;
+  const now = performance.now();
+  if (game.state === 'TITLE' || game.state === 'TURN_END' || now - backAt < 2000) { history.back(); return; }
+  backAt = now;
+  guardBack();
+});
 
 const STEP = 1 / 60;
 let last = performance.now(), acc = 0, fps = 60;
@@ -1852,7 +1938,6 @@ function frame(now) {
   if (dt > 0) fps = fps * 0.95 + (1 / dt) * 0.05;
   if (dt > 0.25) dt = 0.25;
   acc += dt;
-  gestures.tick(now / 1000);
   let n = 0;
   while (acc >= STEP && n < 20) { game.update(STEP); acc -= STEP; n++; }
   Sound.update();
