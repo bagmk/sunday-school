@@ -3,77 +3,208 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1f1d1a">
 <meta name="color-scheme" content="dark">
-<meta name="description" content="마태복음 9:1–8을 세 인물의 눈으로 따라가는 한영 이야기 게임 · A bilingual story game on Matthew 9:1–8">
-<title>그가 일어나기 전 · Before He Stood</title>
-<!-- Optional web fonts. media="print" keeps the request from blocking the page (a network that stalls
-     instead of failing must never hold the game); onload switches the stylesheet on when it arrives. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&amp;family=IBM+Plex+Sans+KR:wght@400;500;600&amp;display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&amp;family=IBM+Plex+Sans+KR:wght@400;500;600&amp;display=swap"></noscript>
-<link rel="stylesheet" href="css/style.css?v=5ba63277ae">
+<meta name="theme-color" content="#060b15">
+<meta name="description" content="주일학교 수업용 성경 게임 모음 · Bible games for Sunday school">
+<title>주일학교 게임 · Sunday School Games</title>
+<style>
+  :root {
+    --bg-top: #070d18;
+    --bg-bottom: #03060c;
+    --card: rgba(255, 255, 255, .045);
+    --card-hover: rgba(255, 255, 255, .075);
+    --line: rgba(255, 255, 255, .09);
+    --text: #f3ecdf;
+    --muted: rgba(243, 236, 223, .62);
+    --faint: rgba(243, 236, 223, .42);
+    --gold: #f1d9a6;
+    --gold-line: rgba(241, 217, 166, .45);
+    --sans: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    --serif: "Noto Serif KR", "AppleMyungjo", "Batang", Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg-bottom); }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--text);
+    font-family: var(--sans);
+    background: radial-gradient(1200px 520px at 50% -120px, rgba(255, 232, 190, .10), transparent 70%),
+                linear-gradient(var(--bg-top), var(--bg-bottom));
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 24px 40px; }
+  header { text-align: center; margin-bottom: 40px; }
+  header h1 {
+    margin: 0;
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(30px, 5vw, 46px);
+    letter-spacing: .01em;
+    text-shadow: 0 0 24px rgba(255, 205, 130, .25);
+  }
+  header h1 .en { color: var(--muted); }
+  header p { margin: 12px 0 0; color: var(--muted); font-size: 16px; }
+
+  .grid {
+    list-style: none; margin: 0; padding: 0;
+    display: grid; gap: 22px;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 430px));
+    justify-content: center;
+  }
+  .app {
+    display: flex; flex-direction: column; height: 100%;
+    padding: 22px; border-radius: 22px;
+    background: var(--card); border: 1px solid var(--line);
+    color: inherit; text-decoration: none;
+    transition: background .18s, border-color .18s, transform .18s;
+  }
+  .app:hover { background: var(--card-hover); border-color: rgba(255, 255, 255, .16); transform: translateY(-2px); }
+  .app:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  .top { display: flex; gap: 18px; align-items: center; }
+  .icon { flex: 0 0 auto; width: 88px; height: 88px; border-radius: 22px; overflow: hidden; box-shadow: 0 6px 20px rgba(0, 0, 0, .45); }
+  .icon svg { display: block; width: 100%; height: 100%; }
+  .ref { margin: 0; font-family: var(--serif); font-size: 26px; line-height: 1.2; color: var(--gold); }
+  .ref-en { margin: 4px 0 0; font-size: 13px; color: var(--faint); letter-spacing: .02em; }
+  .title { margin: 20px 0 0; font-family: var(--serif); font-weight: 400; font-size: 24px; line-height: 1.3; }
+  .title .en { display: block; font-size: 17px; color: var(--muted); }
+  .desc { margin: 10px 0 0; color: var(--muted); font-size: 15px; line-height: 1.55; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 0; padding: 0; list-style: none; }
+  .chips li { font-size: 12.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; }
+  .open {
+    margin-top: auto; padding-top: 20px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .badge { font-size: 12px; letter-spacing: .08em; color: #0b1220; background: var(--gold); border-radius: 999px; padding: 3px 9px; }
+  .btn {
+    margin-left: auto;
+    font-size: 15px; color: var(--text);
+    border: 1px solid var(--gold-line); border-radius: 999px; padding: 8px 18px;
+    background: rgba(255, 228, 180, .08);
+  }
+  .app:hover .btn, .app:focus-visible .btn { background: rgba(255, 228, 180, .16); }
+  footer { margin-top: 44px; text-align: center; color: var(--faint); font-size: 12.5px; line-height: 1.7; }
+  footer p { margin: 0 0 6px; }
+  @media (max-width: 420px) {
+    .wrap { padding: 36px 16px 28px; }
+    .icon { width: 72px; height: 72px; border-radius: 18px; }
+    .ref { font-size: 22px; }
+  }
+</style>
 </head>
-<body data-screen="title">
-<div id="app" class="app">
-  <div id="stage" class="stage" data-pov="normal" aria-hidden="true">
-    <div class="art" id="art">
-      <div class="art__sway">
-        <div class="art__layer" id="artA"></div>
-        <div class="art__layer" id="artB"></div>
-      </div>
-    </div>
-    <div class="veil" id="veil"></div>
-    <div class="light" id="light" data-level="off"></div>
-  </div>
+<body>
+<div class="wrap">
+  <header>
+    <h1>주일학교 게임 <span class="en">· Sunday School Games</span></h1>
+    <p>말씀으로 함께하는 교실 게임 · Classroom games on Scripture</p>
+  </header>
 
-  <div class="cast" id="cast" aria-hidden="true"></div>
+  <main>
+    <ul class="grid">
+      <li>
+        <a class="app" href="apps/before-he-stood/index.html">
+          <div class="top">
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 88 88">
+                <defs>
+                  <linearGradient id="bhs-bg" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#3a2a1c"/><stop offset="1" stop-color="#1c140d"/>
+                  </linearGradient>
+                  <radialGradient id="bhs-light" cx="44" cy="10" r="46" gradientUnits="userSpaceOnUse">
+                    <stop offset="0" stop-color="#ffe7b8" stop-opacity=".85"/><stop offset="1" stop-color="#ffe7b8" stop-opacity="0"/>
+                  </radialGradient>
+                </defs>
+                <rect width="88" height="88" fill="url(#bhs-bg)"/>
+                <path d="M30 0 L58 0 L64 70 L24 70 Z" fill="url(#bhs-light)"/>
+                <rect x="8" y="12" width="26" height="6" rx="2" fill="#5b4330"/>
+                <rect x="54" y="12" width="26" height="6" rx="2" fill="#5b4330"/>
+                <line x1="30" y1="18" x2="30" y2="52" stroke="#e8c995" stroke-width="1.2" opacity=".7"/>
+                <line x1="58" y1="18" x2="58" y2="52" stroke="#e8c995" stroke-width="1.2" opacity=".7"/>
+                <rect x="24" y="50" width="40" height="7" rx="3" fill="#d9b98a"/>
+                <circle cx="31" cy="48" r="4" fill="#d9b98a"/>
+                <rect x="10" y="72" width="68" height="3" rx="1.5" fill="#5b4330" opacity=".8"/>
+              </svg>
+            </div>
+            <div>
+              <p class="ref">마태복음 9:1–8</p>
+              <p class="ref-en">Matthew 9:1–8</p>
+            </div>
+          </div>
+          <h2 class="title">그가 일어나기 전 <span class="en">Before He Stood</span></h2>
+          <p class="desc">세 사람의 눈으로 따라가는 이야기 게임. 반 전체가 TV 한 대로 함께 해요.<br>A story game through three people's eyes, played together on one screen.</p>
+          <ul class="chips">
+            <li>이야기 · Story</li>
+            <li>세 인물 · 3 characters</li>
+            <li>약 20분 · ~20 min</li>
+          </ul>
+          <div class="open"><span class="btn">열기 · Open ▶</span></div>
+        </a>
+      </li>
 
-  <div class="caption" id="caption" hidden></div>
-  <div class="echo" id="echo" hidden></div>
-  <div class="pin" id="pin" hidden></div>
+      <li>
+        <a class="app" href="apps/fourth-watch/index.html">
+          <div class="top">
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 88 88">
+                <defs>
+                  <linearGradient id="fw-bg" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#0a1424"/><stop offset=".22" stop-color="#0b1b2e"/><stop offset="1" stop-color="#06121f"/>
+                  </linearGradient>
+                  <radialGradient id="fw-glow" cx="44" cy="14" r="34" gradientUnits="userSpaceOnUse">
+                    <stop offset="0" stop-color="#ffeec8" stop-opacity=".75"/><stop offset="1" stop-color="#ffeec8" stop-opacity="0"/>
+                  </radialGradient>
+                </defs>
+                <rect width="88" height="88" fill="url(#fw-bg)"/>
+                <circle cx="44" cy="14" r="34" fill="url(#fw-glow)"/>
+                <circle cx="44" cy="9" r="3.4" fill="#fff6e2"/>
+                <path d="M41.5 13 C40 15 39.5 19 38.5 23 L49.5 23 C48.5 19 48 15 46.5 13 Z" fill="#fff6e2"/>
+                <g fill="none" stroke="#e2ecf6" stroke-linecap="round" opacity=".7">
+                  <path d="M10 36 H34"/><path d="M14 39 H30"/><path d="M34 36 a3 3 0 1 0 -3 -3" />
+                  <path d="M54 48 H78"/><path d="M58 51 H74"/><path d="M54 48 a3 3 0 1 1 3 -3" />
+                  <path d="M12 60 H36"/><path d="M16 63 H32"/><path d="M36 60 a3 3 0 1 0 -3 -3" />
+                </g>
+                <circle cx="44" cy="52" r="2.8" fill="#a9bdd6"/>
+                <path d="M42 55 H46 L48 63 H40 Z" fill="#a9bdd6"/>
+                <path d="M22 74 H66 C64 80 60 83 54 83 H34 C28 83 24 80 22 74 Z" fill="#0a0a0d"/>
+                <rect x="49" y="64" width="1.5" height="10" fill="#0a0a0d"/>
+              </svg>
+            </div>
+            <div>
+              <p class="ref">마태복음 14:22–33</p>
+              <p class="ref-en">Matthew 14:22–33</p>
+            </div>
+          </div>
+          <h2 class="title">새벽 3시 <span class="en">The Fourth Watch</span></h2>
+          <p class="desc">바람 부는 새벽 바다, 배에서 예수님께로 건너가세요.<br>A stormy sea before dawn: cross from the boat to Jesus.</p>
+          <ul class="chips">
+            <li>건너기 게임 · Arcade</li>
+            <li>키보드 ← ↑ → · Keyboard</li>
+            <li>한 사람 60초 · 60 s each</li>
+          </ul>
+          <div class="open"><span class="badge">NEW</span><span class="btn">열기 · Open ▶</span></div>
+        </a>
+      </li>
+    </ul>
+  </main>
 
-  <section class="play" id="play" hidden>
-    <button class="advance" id="advance" type="button" data-testid="advance" aria-label="다음 · Next"></button>
-    <div class="card" id="card" hidden></div>
-    <div class="snip" id="snip" hidden></div>
-    <div class="dock" id="dock">
-      <div class="reply" id="reply" aria-live="polite"></div>
-      <div class="panel" id="panel">
-        <div class="plate" id="plate" hidden></div>
-        <div class="text" id="text" data-testid="textbox" aria-live="polite"></div>
-        <div class="ref" id="ref" hidden></div>
-        <span class="more" id="more" aria-hidden="true"></span>
-      </div>
-      <div class="choices" id="choices" hidden></div>
-      <div class="pressbox" id="pressbox" hidden></div>
-      <div class="actions" id="actions" hidden></div>
-    </div>
-  </section>
-
-  <main class="screen" id="screen"></main>
-
-  <header class="topbar" id="topbar" hidden></header>
-  <div class="settings" id="settings" hidden></div>
-  <div class="modal" id="modal" hidden></div>
-  <aside class="debug" id="debug" hidden></aside>
-
-  <noscript><p class="noscript">이 게임은 자바스크립트가 필요해요. · This game needs JavaScript.</p></noscript>
+  <footer>
+    <p>인터넷 없이도 열려요: 이 폴더의 <code>index.html</code>을 더블클릭하세요. · Works offline: open <code>index.html</code> from this folder.</p>
+    <p>성경 본문: 성경전서 개역개정판 © 대한성서공회 · Scripture quotations from the ESV® Bible © 2001 Crossway.</p>
+  </footer>
 </div>
-
-<script src="data/meta.js?v=5ba63277ae"></script>
-<script src="data/characters.js?v=5ba63277ae"></script>
-<script src="data/scripture.js?v=5ba63277ae"></script>
-<script src="data/common.js?v=5ba63277ae"></script>
-<script src="data/ui-strings.js?v=5ba63277ae"></script>
-<script src="data/routes/scribe.js?v=5ba63277ae"></script>
-<script src="data/routes/friend.js?v=5ba63277ae"></script>
-<script src="data/routes/asher.js?v=5ba63277ae"></script>
-<script src="js/engine.js?v=5ba63277ae"></script>
-<script src="js/art.js?v=5ba63277ae"></script>
-<script src="js/portraits.js?v=5ba63277ae"></script>
-<script src="js/ui.js?v=5ba63277ae"></script>
-<script src="js/main.js?v=5ba63277ae"></script>
+<script>
+  // Arrow keys move between apps (handy with a presentation remote); Enter opens the focused app.
+  (function () {
+    var apps = Array.prototype.slice.call(document.querySelectorAll('.app'));
+    document.addEventListener('keydown', function (e) {
+      var i = apps.indexOf(document.activeElement);
+      var step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1 : 0;
+      if (!step) return;
+      e.preventDefault();
+      var next = i < 0 ? 0 : (i + step + apps.length) % apps.length;
+      apps[next].focus();
+    });
+  })();
+</script>
 </body>
 </html>

@@ -1,0 +1,1614 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#060b15">
+<title>새벽 3시 · The Fourth Watch</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  body { -webkit-user-select: none; user-select: none; }
+  #c { position: absolute; display: block; outline: none; touch-action: manipulation; }
+</style>
+</head>
+<body>
+<canvas id="c" tabindex="0" aria-label="새벽 3시 · The Fourth Watch"></canvas>
+<script>
+"use strict";
+
+// ============================================================================
+// Tunables
+// ============================================================================
+const CONFIG = {
+  LANES: 8, LANE_H: 65, TOP_H: 110, COLS: 16, COL_W: 80,
+  STEP_COOLDOWN_MS: 110,
+  WORD_FIRST_AT_S: 6,      // first Word window after a turn starts
+  WORD_INTERVAL_S: 10,     // adjustable 8-12 with +/- keys
+  WORD_DURATION_S: 2.5,
+  WORD_HOLD_ARM_S: 0.35,   // up must be pressed during a window and held this long
+  WORD_WALK_CROSS_S: 5.0,  // time to cross all 8 lanes while holding up
+  STILL_LIMIT_S: 2.0,      // standing still on the sea starts sinking
+  PLAYER_TIME_S: 60,       // per-player turn, unlimited respawns
+  LANE_SPEED: [90, 110, 130, 150, 175, 200, 230, 260],   // px/s, lane 1 -> 8
+  GUST_LEN:   [120, 140, 140, 160, 170, 180, 190, 210],  // px, lane 1 -> 8
+  SUDDEN_P:   [0, 0, 0, 0.15, 0.35, 0.55, 0.75, 1.0],    // lane 1 -> 8, normal mode only
+  SUDDEN_TELEGRAPH_S: [0.7, 0.7, 0.7, 0.7, 0.6, 0.5, 0.45, 0.25],
+  SINK_LINE: 'v31',        // 'v31' | 'v27' | 'alternate'
+  RESPAWN_CALM_S: 1.0,
+
+  // Additional tunables used by the implementation
+  W: 1280, H: 720,
+  BOAT_Y: 626,                 // Peter's anchor (body centre) while standing in the boat
+  BOAT_MAX_COL: 2,             // columns either side of the bow that are still on deck
+  JESUS_FEET_Y: 100,
+  GUST_GAP_S: [1.5, 3.5],      // random gap between traveling gusts
+  GUST_GAP_SHRINK: 0.10,       // gap shrink per lane above lane 4
+  GUST_LEN_JITTER: 0.12,       // +/- fraction of GUST_LEN for traveling gusts
+  GUST_CORE_FRAC: 0.70,        // front part of a gust that collides
+  GUST_CORE_HALF_H: 14,        // collision half-height around the lane centre
+  HITBOX_W: 24, HITBOX_H: 36, HITBOX_DY: -16,   // Peter's body box relative to his anchor
+  SUDDEN_LEAD_FRAC: 0.40,      // sudden gust forms with its leading end this far ahead of the column
+  WIDE_GUST_LEN: 290,          // last-lane sudden gust: covers the column and both neighbours
+  WIDE_GUST_LEAD: 100,
+  WALK_EXIT_SUDDEN_P: 0.9,
+  WALK_EXIT_TELEGRAPH_S: 0.5,
+  WALK_FADE_RADIUS: 60,        // gusts this close to Peter's column fade during a Word Walk
+  WALK_FADE_ALPHA: 0.15,
+  WORD_INTERVAL_RANGE: [8, 12],
+  DIFFICULTY: [0.85, 1.0, 1.15],   // presets on keys 1 / 2 / 3
+  TIMEUP_S: 2.0,
+  REACHED_S: 3.0,
+  WHOOSH_DIST: 150,
+  SINK_TIMELINE: { sinkEnd: 0.8, cry: 0.3, cryEnd: 1.3, handStart: 1.2, handEnd: 1.8,
+                   lineStart: 1.8, lineEnd: 3.8, respawn: 4.15, end: 4.5 },
+  VIGNETTE: [0.55, 0.72],
+  PREWARM_S: 16,               // pre-simulate the wind so the sea is full when a turn starts
+};
+
+const TEXT = {
+  title: '새벽 3시',
+  titleEn: 'The Fourth Watch',
+  ref: '마태복음 14:22–33 · Matthew 14:22–33',
+  tagline: '배에서 예수님께로 건너가세요 · Cross from the boat to Jesus',
+  start: 'Enter ▶ 시작 · Start',
+  hint: '← ↑ → 이동 · Arrow keys',
+  wordKo: '오라',
+  wordEn: 'Come',
+  cryKo: '주여, 나를 구원하소서!',
+  cryEn: 'Lord, save me!',
+  v31: { ko: '믿음이 작은 자여, 왜 의심하였느냐?', en: 'You of little faith, why did you doubt? · 마태복음 14:31' },
+  v27: { ko: '안심하라. 나다. 두려워하지 말라.', en: 'Take heart; it is I. Do not be afraid. · 마태복음 14:27' },
+  restart: '잠시 후 배에서 다시 시작합니다 · Restarting from the boat…',
+  timeUp: '시간 종료 · Time’s up',
+  next: n => '다음 사람 · Next player (' + n + ')',
+  player: n => '플레이어 ' + n,
+};
+
+const FONT_SANS = '"Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif';
+const FONT_SERIF = '"Noto Serif KR","AppleMyungjo","Batang",serif';
+
+// ============================================================================
+// Helpers and geometry
+// ============================================================================
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+const easeOut = t => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
+const easeInOut = t => { t = clamp(t, 0, 1); return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
+
+// Small seeded PRNG so self-tests are reproducible.
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const LANES = CONFIG.LANES;
+const SEA_BOTTOM = CONFIG.TOP_H + LANES * CONFIG.LANE_H;       // 630
+const CX = CONFIG.W / 2;                                         // 640, Jesus and the bow
+// COLS positions centred on the bow (16 has no centre column, so it gives 15), capped to stay on screen.
+const MAX_COL = Math.min(Math.floor((CONFIG.COLS - 1) / 2),
+                         Math.floor((CX - CONFIG.COL_W / 2) / CONFIG.COL_W));   // 7 -> x in [80, 1200]
+
+function laneTop(n) { return SEA_BOTTOM - n * CONFIG.LANE_H; }
+function laneY(n) { return n <= 0 ? CONFIG.BOAT_Y : laneTop(n) + CONFIG.LANE_H / 2; }
+function laneDir(n) { return n % 2 === 1 ? 1 : -1; }   // odd lanes travel right, even lanes left
+function colX(c) { return CX + c * CONFIG.COL_W; }
+function laneFromY(y) {
+  if (y >= SEA_BOTTOM) return 0;
+  if (y < CONFIG.TOP_H) return LANES + 1;
+  return Math.min(LANES, Math.floor((SEA_BOTTOM - y) / CONFIG.LANE_H) + 1);
+}
+function nearestLane(y) {
+  let best = 0, bd = Infinity;
+  for (let n = 0; n <= LANES; n++) { const d = Math.abs(laneY(n) - y); if (d < bd) { bd = d; best = n; } }
+  return best;
+}
+function walkSpeed() { return LANES * CONFIG.LANE_H / CONFIG.WORD_WALK_CROSS_S; }
+// Colliding front part of a gust as [left, right].
+function coreSpan(g) {
+  const c = g.len * CONFIG.GUST_CORE_FRAC;
+  return g.dir > 0 ? [g.x - c, g.x] : [g.x, g.x + c];
+}
+
+// ============================================================================
+// Simulation (no rendering, no audio; used by the game and by the self-test)
+// ============================================================================
+class Game {
+  constructor(opts) {
+    opts = opts || {};
+    this.rng = opts.rng || Math.random;
+    this.listeners = [];
+    this.wordInterval = CONFIG.WORD_INTERVAL_S;
+    this.diffIdx = 1;
+    this.sinkCount = 0;
+    this.playerNum = 1;
+    this.debug = false;
+    this.muted = false;
+    this.toastMsg = ''; this.toastT = -10;
+    this.t = 0;
+    this.held = Object.create(null);
+    this.state = 'TITLE';
+    this.stats = this.freshStats();
+    this.resetWorld();
+  }
+
+  freshStats() { return { wordsHeard: 0, wordWalks: 0, sinks: 0, maxLane: 0, reached: false }; }
+  on(fn) { this.listeners.push(fn); }
+  emit(type, data) { for (let i = 0; i < this.listeners.length; i++) this.listeners[i](type, data || {}, this); }
+
+  get diff() { return CONFIG.DIFFICULTY[this.diffIdx]; }
+  laneSpeed(n) { return CONFIG.LANE_SPEED[n - 1] * this.diff; }
+  suddenP(n) { return n >= LANES ? 1 : clamp(CONFIG.SUDDEN_P[n - 1] * this.diff, 0, 1); }
+  gap(n) {
+    const a = CONFIG.GUST_GAP_S[0], b = CONFIG.GUST_GAP_S[1];
+    const g = a + (b - a) * this.rng();
+    return n > 4 ? g * Math.pow(1 - CONFIG.GUST_GAP_SHRINK, n - 4) : g;
+  }
+
+  resetWorld() {
+    this.gusts = [];
+    this.tele = [];
+    this.laneTimer = [];
+    for (let n = 1; n <= LANES; n++) this.laneTimer[n] = this.rng() * 2;
+    this.spawnEnabled = true;
+    this.calmUntil = -1;
+    this.calmMul = 1;
+    this.p = { col: 0, x: CX, y: laneY(0), lane: 0, stillT: 0, cooldownUntil: -1,
+               trailA: 0, trailX: CX, trailTop: laneY(0) };
+    this.arming = null;
+    this.word = null;
+    this.lastWordStart = null;
+    this.nextWordAt = CONFIG.WORD_FIRST_AT_S;
+    this.turnT = 0;
+    this.sinkT = 0; this.respawnT = 0; this.reachT = 0; this.timeupT = 0;
+    this.sinkLine = null; this.sinkFlags = null; this.sinkPos = null; this.reachFrom = null;
+    this.vis = { wordGlow: 0, bubbleA: 0 };
+    this.warm = true;
+    const steps = Math.round(CONFIG.PREWARM_S * 30);
+    for (let i = 0; i < steps; i++) this.updateGusts(1 / 30);
+    for (const g of this.gusts) { g.alpha = 1; g.formA = 1; }
+    this.warm = false;
+  }
+
+  // ---- state transitions --------------------------------------------------
+  startTurn() {
+    this.resetWorld();
+    this.stats = this.freshStats();
+    this.state = 'PLAYING';
+    this.emit('turnStart', { player: this.playerNum });
+  }
+  toTitle() {
+    this.state = 'TITLE';
+    this.playerNum = 1;
+    this.debug = false;            // a stray D never carries over to the next student
+    this.resetWorld();
+    this.emit('title');
+  }
+  toTurnEnd() {
+    this.state = 'TURN_END';
+    this.arming = null;
+    this.resetWorld();
+    this.emit('turnEnd', { stats: Object.assign({}, this.stats) });
+  }
+  toTimeUp() {
+    this.state = 'TIMEUP';
+    this.timeupT = 0;
+    this.arming = null;
+    this.tele = [];
+    this.emit('timeUp', { text: TEXT.timeUp });
+  }
+  nextTurn() { this.playerNum++; this.debug = false; this.startTurn(); }
+
+  // ---- input --------------------------------------------------------------
+  keyDown(code, repeat, key) {
+    if (repeat || this.held[code]) return;          // no auto-repeat, ever
+    this.held[code] = true;
+    const s = this.state;
+    if (code === 'Enter' || code === 'NumpadEnter') {
+      if (s === 'TITLE') { this.playerNum = 1; this.startTurn(); }
+      else if (s === 'TURN_END') this.nextTurn();
+      else if (s === 'TIMEUP') this.toTurnEnd();
+      return;
+    }
+    if (code === 'Escape') { this.toTitle(); return; }
+    if (code === 'KeyD') { this.debug = !this.debug; return; }
+    if (code === 'KeyM') { this.muted = !this.muted; this.emit('mute', { muted: this.muted }); return; }
+    if (code === 'KeyN') {
+      if (s === 'TURN_END') this.nextTurn();
+      else if (s !== 'TITLE') this.toTurnEnd();
+      return;
+    }
+    if (code === 'Equal' || code === 'NumpadAdd' || key === '+') { this.setWordInterval(this.wordInterval + 1); return; }
+    if (code === 'Minus' || code === 'NumpadSubtract' || key === '-') { this.setWordInterval(this.wordInterval - 1); return; }
+    const di = { Digit1: 0, Digit2: 1, Digit3: 2, Numpad1: 0, Numpad2: 1, Numpad3: 2 }[code];
+    if (di !== undefined) { this.diffIdx = di; this.toast('Difficulty x' + CONFIG.DIFFICULTY[di]); return; }
+    if (code === 'ArrowUp' || code === 'ArrowDown' || code === 'ArrowLeft' || code === 'ArrowRight') this.onArrow(code);
+  }
+
+  keyUp(code) {
+    this.held[code] = false;
+    if (code === 'ArrowUp') {
+      this.arming = null;                          // any release ends arming, so taps never chain
+      if (this.state === 'WORD_WALK') this.exitWalk('release');
+    }
+  }
+
+  releaseAll() {
+    this.held = Object.create(null);
+    this.arming = null;
+    if (this.state === 'WORD_WALK') this.exitWalk('release');
+  }
+
+  onArrow(code) {
+    const s = this.state;
+    if (s === 'WORD_WALK') {
+      if (code !== 'ArrowUp') this.exitWalk('look');   // he looked at the wind
+      return;
+    }
+    if (s !== 'PLAYING') return;
+    if (code === 'ArrowUp') {
+      if (this.word && !this.arming) { this.arming = { t0: this.turnT }; this.emit('arm'); }
+      this.tryStep(0, 1);
+    } else {
+      this.arming = null;
+      if (code === 'ArrowDown') this.tryStep(0, -1);
+      else this.tryStep(code === 'ArrowLeft' ? -1 : 1, 0);
+    }
+  }
+
+  setWordInterval(v) {
+    v = clamp(v, CONFIG.WORD_INTERVAL_RANGE[0], CONFIG.WORD_INTERVAL_RANGE[1]);
+    this.wordInterval = v;
+    // Also during an open window: the next one moves at once (the 8 s minimum exceeds the window length).
+    if (this.lastWordStart !== null) this.nextWordAt = Math.max(this.turnT, this.lastWordStart + v);
+    this.toast('Word interval ' + v + ' s');
+  }
+  toast(msg) { this.toastMsg = msg; this.toastT = this.t; }
+
+  // One discrete step; returns true when Peter moved.
+  tryStep(dx, dy) {
+    const p = this.p;
+    if (this.t < p.cooldownUntil - 1e-9) return false;
+    const lane = p.lane + dy;
+    if (lane > LANES || lane < 0) return false;           // no plain step leaves the last lane
+    if (lane === 0 && Math.abs(p.col) > CONFIG.BOAT_MAX_COL) return false;
+    const maxC = lane === 0 ? CONFIG.BOAT_MAX_COL : MAX_COL;
+    const col = clamp(p.col + dx, -maxC, maxC);
+    if (lane === p.lane && col === p.col) return false;
+    const entered = lane !== p.lane;
+    p.lane = lane; p.col = col; p.x = colX(col); p.y = laneY(lane);
+    p.stillT = 0;
+    p.cooldownUntil = this.t + CONFIG.STEP_COOLDOWN_MS / 1000;
+    if (lane > this.stats.maxLane) this.stats.maxLane = lane;
+    if (lane >= 1 && (entered || lane === LANES)) this.rollSudden(lane);
+    this.emit('step', { lane: lane, col: col });
+    return true;
+  }
+
+  rollSudden(n) {
+    if (this.rng() < this.suddenP(n)) this.addTele(n, this.p.x, CONFIG.SUDDEN_TELEGRAPH_S[n - 1]);
+  }
+  addTele(n, x, dur) {
+    this.tele.push({ lane: n, x: x, t: dur, dur: dur, wide: n >= LANES, seed: this.rng() });
+    this.emit('telegraph', { lane: n, x: x });
+  }
+  formGust(tl) {
+    const n = tl.lane, dir = laneDir(n);
+    let len, lead;
+    if (tl.wide) { len = CONFIG.WIDE_GUST_LEN; lead = tl.x + dir * CONFIG.WIDE_GUST_LEAD; }
+    else { len = CONFIG.GUST_LEN[n - 1]; lead = tl.x + dir * len * CONFIG.SUDDEN_LEAD_FRAC; }
+    this.gusts.push({ lane: n, dir: dir, x: lead, len: len, seed: this.rng(), alpha: 1, formA: 0, whooshed: false, sudden: true });
+    this.emit('gustForm', { lane: n, x: tl.x });
+  }
+  spawnGust(n) {
+    const dir = laneDir(n);
+    const j = CONFIG.GUST_LEN_JITTER;
+    const len = CONFIG.GUST_LEN[n - 1] * (1 - j + 2 * j * this.rng());
+    this.gusts.push({ lane: n, dir: dir, x: dir > 0 ? -20 : CONFIG.W + 20, len: len,
+                      seed: this.rng(), alpha: 1, formA: 1, whooshed: false, sudden: false });
+  }
+
+  startWalk() {
+    const p = this.p;
+    this.arming = null;
+    this.state = 'WORD_WALK';
+    this.stats.wordWalks++;
+    this.tele = [];
+    p.stillT = 0;
+    p.trailX = p.x;
+    this.emit('walk');
+  }
+  exitWalk(reason) {
+    const p = this.p;
+    let n = nearestLane(p.y);
+    if (n === 0 && Math.abs(p.col) > CONFIG.BOAT_MAX_COL) n = 1;
+    p.lane = n; p.y = laneY(n);
+    this.state = 'PLAYING';
+    this.arming = null;
+    p.stillT = 0;
+    p.cooldownUntil = this.t + CONFIG.STEP_COOLDOWN_MS / 1000;
+    if (n > this.stats.maxLane) this.stats.maxLane = n;
+    // The last lane is always guarded, so an exit there can never become a plain crossing.
+    if (n >= 1 && (n >= LANES || this.rng() < CONFIG.WALK_EXIT_SUDDEN_P)) this.addTele(n, p.x, CONFIG.WALK_EXIT_TELEGRAPH_S);
+    this.emit('walkExit', { reason: reason, lane: n });
+  }
+  reach() {
+    const p = this.p;
+    this.state = 'REACHED';
+    this.reachT = 0;
+    this.arming = null;
+    this.tele = [];
+    this.stats.reached = true;
+    this.stats.maxLane = LANES;
+    this.reachFrom = { x: p.x, y: p.y };
+    this.emit('reached', { text: TEXT.v27.ko });
+  }
+  sink(reason) {
+    const p = this.p;
+    this.state = 'SINKING';
+    this.sinkT = 0;
+    this.arming = null;
+    this.tele = [];
+    this.stats.sinks++;
+    this.sinkFlags = { cry: false, hand: false, line: false };
+    let key = 'v31';
+    if (CONFIG.SINK_LINE === 'v27') key = 'v27';
+    else if (CONFIG.SINK_LINE === 'alternate') key = this.sinkCount % 2 === 0 ? 'v31' : 'v27';
+    this.sinkCount++;
+    this.sinkLine = TEXT[key];
+    this.sinkPos = { x: p.x, y: p.y };
+    this.emit('sink', { reason: reason, lane: p.lane });
+  }
+  respawn() {
+    const p = this.p;
+    p.col = 0; p.x = CX; p.lane = 0; p.y = laneY(0); p.stillT = 0; p.trailA = 0;
+    this.state = 'RESPAWN';
+    this.respawnT = 0;
+    this.tele = [];
+    this.calmUntil = this.t + CONFIG.RESPAWN_CALM_S;   // the wind ceased (14:32)
+    this.emit('respawn');
+  }
+
+  hitTest() {
+    const p = this.p, hw = CONFIG.HITBOX_W / 2;
+    const x0 = p.x - hw, x1 = p.x + hw, y0 = p.y + CONFIG.HITBOX_DY, y1 = y0 + CONFIG.HITBOX_H;
+    for (let i = 0; i < this.gusts.length; i++) {
+      const g = this.gusts[i];
+      if (g.lane !== p.lane) continue;
+      const cy = laneY(g.lane);
+      if (y1 < cy - CONFIG.GUST_CORE_HALF_H || y0 > cy + CONFIG.GUST_CORE_HALF_H) continue;
+      const c = coreSpan(g);
+      if (c[1] >= x0 && c[0] <= x1) return g;
+    }
+    return null;
+  }
+
+  // ---- per-tick update ----------------------------------------------------
+  update(dt) {
+    this.t += dt;
+    const s = this.state;
+    if (s === 'PLAYING' || s === 'WORD_WALK' || s === 'SINKING' || s === 'RESPAWN') {
+      this.turnT += dt;
+      this.updateWord();
+    }
+    this.updateGusts(dt);
+    switch (s) {
+      case 'PLAYING': this.updatePlaying(dt); break;
+      case 'WORD_WALK': this.updateWalk(dt); break;
+      case 'SINKING': this.updateSinking(dt); break;
+      case 'RESPAWN':
+        this.respawnT += dt;
+        if (this.respawnT >= CONFIG.SINK_TIMELINE.end - CONFIG.SINK_TIMELINE.respawn) {
+          this.state = 'PLAYING';
+          this.p.stillT = 0;
+          this.emit('resume');
+        }
+        break;
+      case 'REACHED': this.updateReached(dt); break;
+      case 'TIMEUP':
+        this.timeupT += dt;
+        if (this.timeupT >= CONFIG.TIMEUP_S) this.toTurnEnd();
+        break;
+    }
+    this.updateVisuals(dt);
+  }
+
+  updateWord() {
+    if (this.word && this.turnT >= this.word.end) { this.word = null; this.emit('wordClose'); }
+    const s = this.state;
+    if (!this.word && this.turnT >= this.nextWordAt && (s === 'PLAYING' || s === 'WORD_WALK') &&
+        this.turnT < CONFIG.PLAYER_TIME_S) {
+      this.word = { start: this.turnT, end: this.turnT + CONFIG.WORD_DURATION_S };
+      this.lastWordStart = this.turnT;
+      this.nextWordAt = this.turnT + this.wordInterval;
+      this.stats.wordsHeard++;
+      this.emit('wordOpen');
+    }
+  }
+
+  updatePlaying(dt) {
+    const p = this.p;
+    if (this.turnT >= CONFIG.PLAYER_TIME_S && !this.arming) { this.toTimeUp(); return; }
+    if (this.arming) {
+      if (!this.held.ArrowUp) this.arming = null;
+      else if (this.turnT - this.arming.t0 >= CONFIG.WORD_HOLD_ARM_S - 1e-6) { this.startWalk(); return; }
+    }
+    if (this.arming) return;                       // stepping out: wind cannot touch him yet
+    if (p.lane >= 1) {
+      p.stillT += dt;
+      if (p.stillT >= CONFIG.STILL_LIMIT_S - 1e-6) { this.sink('still'); return; }
+    }
+    for (let i = this.tele.length - 1; i >= 0; i--) {
+      const tl = this.tele[i];
+      tl.t -= dt;
+      if (tl.t <= 0) { this.tele.splice(i, 1); this.formGust(tl); }
+    }
+    if (p.lane >= 1 && this.hitTest()) this.sink('wind');
+  }
+
+  updateWalk(dt) {
+    const p = this.p;
+    if (!this.held.ArrowUp) { this.exitWalk('release'); return; }
+    p.y -= walkSpeed() * dt;
+    const ln = clamp(laneFromY(p.y), 0, LANES);
+    p.lane = ln;
+    if (ln > this.stats.maxLane) this.stats.maxLane = ln;
+    if (p.y <= CONFIG.TOP_H) this.reach();
+  }
+
+  updateSinking(dt) {
+    const T = CONFIG.SINK_TIMELINE, f = this.sinkFlags;
+    this.sinkT += dt;
+    if (!f.cry && this.sinkT >= T.cry) { f.cry = true; this.emit('cry', { text: TEXT.cryKo }); }
+    if (!f.hand && this.sinkT >= T.handEnd) { f.hand = true; this.emit('hand'); }
+    if (f.hand && !f.line && this.sinkT >= T.lineStart) {
+      f.line = true;
+      this.emit('line', { text: this.sinkLine.ko, en: this.sinkLine.en });
+    }
+    if (this.sinkT >= T.respawn) this.respawn();
+  }
+
+  updateReached(dt) {
+    this.reachT += dt;
+    this.calmMul = lerp(1, 0.15, easeOut(this.reachT / 1.5));
+    const p = this.p, k = easeInOut(this.reachT / 1.4);
+    const tx = this.reachFrom.x <= CX ? CX - 36 : CX + 36;
+    p.x = lerp(this.reachFrom.x, tx, k);
+    p.y = lerp(this.reachFrom.y, CONFIG.JESUS_FEET_Y - 20, k);
+    if (this.reachT >= CONFIG.REACHED_S) this.toTurnEnd();
+  }
+
+  updateGusts(dt) {
+    const s = this.state, p = this.p;
+    const paused = this.t < this.calmUntil;
+    if (!paused) {
+      if (this.spawnEnabled) {
+        for (let n = 1; n <= LANES; n++) {
+          this.laneTimer[n] -= dt;
+          if (this.laneTimer[n] <= 0) { this.spawnGust(n); this.laneTimer[n] += this.gap(n); }
+        }
+      }
+      for (let i = 0; i < this.gusts.length; i++) {
+        const g = this.gusts[i];
+        g.x += g.dir * this.laneSpeed(g.lane) * this.calmMul * dt;
+      }
+      let w = 0;
+      for (let i = 0; i < this.gusts.length; i++) {
+        const g = this.gusts[i];
+        const alive = g.dir > 0 ? g.x - g.len < CONFIG.W + 40 : g.x + g.len > -40;
+        if (alive) this.gusts[w++] = g;
+      }
+      this.gusts.length = w;
+    }
+    if (this.warm) return;
+    const near = CONFIG.WHOOSH_DIST * CONFIG.WHOOSH_DIST;
+    const walking = s === 'WORD_WALK';
+    const r = CONFIG.WALK_FADE_RADIUS;
+    const ka = Math.min(1, dt * 8);
+    for (let i = 0; i < this.gusts.length; i++) {
+      const g = this.gusts[i];
+      if (!g.whooshed && (s === 'PLAYING' || s === 'WORD_WALK')) {
+        const dx = g.x - p.x, dy = laneY(g.lane) - p.y;
+        if (dx * dx + dy * dy < near) { g.whooshed = true; this.emit('whoosh', { x: g.x, lane: g.lane }); }
+      }
+      let target = 1;
+      if (walking) {
+        const lo = Math.min(g.x, g.x - g.dir * g.len), hi = Math.max(g.x, g.x - g.dir * g.len);
+        if (hi >= p.x - r && lo <= p.x + r) target = CONFIG.WALK_FADE_ALPHA;
+      } else if (s === 'REACHED') target = 0.25;
+      g.alpha += (target - g.alpha) * ka;
+      if (g.formA < 1) g.formA = Math.min(1, g.formA + dt * 7);
+    }
+  }
+
+  updateVisuals(dt) {
+    const s = this.state, p = this.p;
+    const speaking = !!this.word && (s === 'PLAYING' || s === 'WORD_WALK');
+    this.vis.wordGlow += ((speaking ? 1 : 0) - this.vis.wordGlow) * Math.min(1, dt * 4);
+    // The bubble is tied to the window itself: it has faded out by the moment ↑ stops answering.
+    const w = this.word;
+    if (speaking) this.vis.bubbleA = clamp(Math.min((this.turnT - w.start) / 0.2, (w.end - this.turnT) / 0.3), 0, 1);
+    else this.vis.bubbleA = s === 'PLAYING' ? 0 : Math.max(0, this.vis.bubbleA - dt * 8);
+    if (s === 'WORD_WALK') { p.trailA = Math.min(1, p.trailA + dt * 4); p.trailTop = p.y; }
+    else p.trailA = Math.max(0, p.trailA - dt * 1.4);
+  }
+}
+
+// ============================================================================
+// Audio (procedural; the Word itself is silent)
+// ============================================================================
+function quiet(p) { if (p && typeof p.catch === 'function') p.catch(() => {}); }
+
+const Sound = {
+  ctx: null, master: null, windBus: null, noise: null, muted: false, lastWhoosh: 0,
+  // Builds the graph on the first user gesture; level is the wind level for the current state.
+  unlock(level) {
+    if (this.ctx) { this.resume(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    let c;
+    try { c = new AC(); } catch (e) { return; }
+    this.ctx = c;
+    this.master = c.createGain();
+    this.master.gain.value = this.muted ? 0 : 0.8;
+    this.master.connect(c.destination);
+    const len = Math.floor(c.sampleRate * 2);
+    const buf = c.createBuffer(1, len, c.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this.noise = buf;
+    // Continuous wind: band-passed noise with slow amplitude and colour LFOs.
+    const src = c.createBufferSource(); src.buffer = buf; src.loop = true;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 650; bp.Q.value = 0.8;
+    const amp = c.createGain(); amp.gain.value = 0.16;
+    const lfo = c.createOscillator(); lfo.frequency.value = 0.13;
+    const lfoG = c.createGain(); lfoG.gain.value = 0.07;
+    const lfo2 = c.createOscillator(); lfo2.frequency.value = 0.047;
+    const lfo2G = c.createGain(); lfo2G.gain.value = 230;
+    lfo.connect(lfoG); lfoG.connect(amp.gain);
+    lfo2.connect(lfo2G); lfo2G.connect(bp.frequency);
+    this.windBus = c.createGain(); this.windBus.gain.value = level === undefined ? 0.7 : level;
+    src.connect(bp); bp.connect(amp); amp.connect(this.windBus); this.windBus.connect(this.master);
+    src.start(); lfo.start(); lfo2.start();
+  },
+  suspend() { if (this.ctx && this.ctx.state === 'running') quiet(this.ctx.suspend()); },
+  resume() { if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed') quiet(this.ctx.resume()); },
+  setWind(level) { if (this.ctx) this.windBus.gain.setTargetAtTime(level, this.ctx.currentTime, 0.4); },
+  setMuted(m) { this.muted = m; if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.8, this.ctx.currentTime, 0.05); },
+  burst(dur, type, f0, f1, q, peak, pan) {
+    const c = this.ctx, t0 = c.currentTime;
+    const src = c.createBufferSource(); src.buffer = this.noise;
+    const f = c.createBiquadFilter(); f.type = type; f.Q.value = q;
+    f.frequency.setValueAtTime(f0, t0); f.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(peak, t0 + dur * 0.35);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(f); f.connect(g);
+    let out = g;
+    if (c.createStereoPanner && pan !== undefined) { const pn = c.createStereoPanner(); pn.pan.value = pan; g.connect(pn); out = pn; }
+    out.connect(this.master);
+    src.start(t0, Math.random() * 1.2);
+    src.stop(t0 + dur + 0.05);
+  },
+  whoosh(x) {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (now - this.lastWhoosh < 0.12) return;
+    this.lastWhoosh = now;
+    this.burst(0.55, 'bandpass', 450, 1400, 1.2, 0.34, clamp((x - CX) / CX, -0.8, 0.8));
+  },
+  splash() {
+    if (!this.ctx) return;
+    const c = this.ctx, t0 = c.currentTime;
+    this.burst(0.7, 'lowpass', 1800, 260, 0.7, 0.55);
+    const o = c.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(120, t0); o.frequency.exponentialRampToValueAtTime(45, t0 + 0.35);
+    const g = c.createGain(); g.gain.setValueAtTime(0.35, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+    o.connect(g); g.connect(this.master); o.start(t0); o.stop(t0 + 0.45);
+  },
+};
+
+// ============================================================================
+// Rendering
+// ============================================================================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = CONFIG.W, H = CONFIG.H;
+
+// Deterministic decoration (rain, clouds).
+const DECO = mulberry32(20261031);
+const RAIN = Array.from({ length: 130 }, () => ({ x: DECO() * 1400, y: DECO() * 760, s: 0.7 + DECO() * 0.6, l: 10 + DECO() * 10 }));
+const CLOUDS = Array.from({ length: 8 }, (_, i) => {
+  const n = 4 + Math.floor(DECO() * 3), parts = [];
+  for (let k = 0; k < n; k++) parts.push({ dx: (k - n / 2) * 36 + DECO() * 20, dy: DECO() * 14 - 7, rx: 38 + DECO() * 42, ry: 14 + DECO() * 12 });
+  return { x: i * 190 + DECO() * 110, y: 18 + DECO() * 66, v: 2 + DECO() * 4, parts: parts, a: 0.35 + DECO() * 0.3 };
+});
+
+let GR = null;   // cached gradients (logical coordinates, transform applied at fill time)
+let SCALE = 1;   // backing-store px per logical px; shadowBlur ignores the transform, so blurs use it
+function gradients() {
+  if (GR) return GR;
+  const sky = ctx.createLinearGradient(0, 0, 0, CONFIG.TOP_H);
+  sky.addColorStop(0, '#060b15'); sky.addColorStop(1, '#0a1424');
+  const sea = ctx.createLinearGradient(0, CONFIG.TOP_H, 0, SEA_BOTTOM);
+  sea.addColorStop(0, '#0b1b2e'); sea.addColorStop(1, '#06121f');
+  const boat = ctx.createLinearGradient(0, SEA_BOTTOM, 0, H);
+  boat.addColorStop(0, '#06111d'); boat.addColorStop(1, '#040a12');
+  GR = { sky: sky, sea: sea, boat: boat };
+  return GR;
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawBackground(t) {
+  const gr = gradients();
+  ctx.fillStyle = gr.sky; ctx.fillRect(0, 0, W, CONFIG.TOP_H);
+  // Storm-cloud blobs
+  for (const c of CLOUDS) {
+    const x = ((c.x + t * c.v) % 1500) - 110;
+    ctx.fillStyle = 'rgba(3,6,12,' + c.a + ')';
+    for (const pt of c.parts) { ctx.beginPath(); ctx.ellipse(x + pt.dx, c.y + pt.dy, pt.rx, pt.ry, 0, 0, Math.PI * 2); ctx.fill(); }
+  }
+  ctx.fillStyle = gr.sea; ctx.fillRect(0, CONFIG.TOP_H, W, SEA_BOTTOM - CONFIG.TOP_H);
+  ctx.fillStyle = gr.boat; ctx.fillRect(0, SEA_BOTTOM, W, H - SEA_BOTTOM);
+  for (let n = 1; n <= LANES; n++) {
+    ctx.fillStyle = n % 2 ? 'rgba(20,48,76,.30)' : 'rgba(10,30,54,.30)';
+    ctx.fillRect(0, laneTop(n), W, CONFIG.LANE_H);
+  }
+  // Three thin wave lines per lane
+  ctx.lineWidth = 1;
+  const alphas = [0.05, 0.07, 0.09];
+  for (let n = 1; n <= LANES; n++) {
+    const d = laneDir(n);
+    for (let k = 0; k < 3; k++) {
+      const y0 = laneTop(n) + 14 + k * 19;
+      ctx.strokeStyle = 'rgba(150,190,230,' + alphas[k] + ')';
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 32) {
+        const y = y0 + Math.sin(x * 0.012 + t * (0.6 + 0.15 * k) * d + n * 1.7 + k * 2.1) * 2.4;
+        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+}
+
+function drawRain(t) {
+  ctx.strokeStyle = 'rgba(180,200,230,.08)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (const d of RAIN) {
+    const y = ((d.y + t * 480 * d.s) % 760) - 20;
+    const x = (((d.x - t * 130 * d.s) % 1400) + 1400) % 1400 - 60;
+    ctx.moveTo(x, y); ctx.lineTo(x - d.l * 0.27, y + d.l);
+  }
+  ctx.stroke();
+}
+
+// Three tapered strands with a curl at the leading end and a few spray dots.
+const STRANDS = [[-6, 0, 1.0, 2.0, true], [0.5, 0.06, 0.82, 1.6, false], [6.5, 0.13, 0.62, 1.3, false]];
+function drawGust(g, t) {
+  const a = 0.55 * g.alpha * g.formA;
+  if (a < 0.01) return;
+  const cy = laneY(g.lane), d = g.dir, L = g.len;
+  ctx.strokeStyle = 'rgba(226,236,246,' + a.toFixed(3) + ')';
+  ctx.fillStyle = ctx.strokeStyle;
+  ctx.lineCap = 'round';
+  const wob = t * 3 + g.seed * 10;
+  for (let s = 0; s < STRANDS.length; s++) {
+    const st = STRANDS[s], yo = st[0];
+    const lead = g.x - d * st[1] * L, tail = lead - d * st[2] * L;
+    const N = 10;
+    let px = 0, py = 0;
+    for (let i = 0; i <= N; i++) {
+      const u = i / N;   // 0 = tail, 1 = leading end
+      const x = tail + (lead - tail) * u;
+      const y = cy + yo + Math.sin(u * Math.PI * 1.3 + wob + yo) * 1.6 * (1 - u * 0.6);
+      if (i > 0) { ctx.lineWidth = 0.3 + st[3] * u; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke(); }
+      px = x; py = y;
+    }
+    if (st[4]) {
+      // Curl at the leading end: forward, up and back over the strand
+      const r = 7;
+      ctx.lineWidth = st[3];
+      ctx.beginPath();
+      if (d > 0) ctx.arc(px, py - r, r, Math.PI / 2, -Math.PI * 1.08, true);
+      else ctx.arc(px, py - r, r, Math.PI / 2, Math.PI * 2.08, false);
+      ctx.stroke();
+    }
+  }
+  // Spray dots just ahead of the leading end
+  for (let k = 0; k < 5; k++) {
+    const ph = (g.seed * 7 + k * 0.37 + t * 0.9) % 1;
+    const x = g.x + d * (2 + ph * 14) - d * k * 6;
+    const y = cy - 11 + ((k * 37 + Math.floor(g.seed * 100)) % 17);
+    ctx.beginPath(); ctx.arc(x, y, 1.1 + (k % 2) * 0.4, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// Spray-burst warning where a sudden gust is about to form.
+function drawTelegraph(tl, t) {
+  const prog = clamp(1 - tl.t / tl.dur, 0, 1);
+  const cy = laneY(tl.lane);
+  const xs = tl.wide ? [tl.x - CONFIG.COL_W, tl.x, tl.x + CONFIG.COL_W] : [tl.x];
+  for (const x of xs) {
+    const r = 6 + prog * 24;
+    const a = 0.2 + 0.55 * prog;
+    ctx.fillStyle = 'rgba(232,240,250,' + a.toFixed(3) + ')';
+    for (let k = 0; k < 14; k++) {
+      const ang = (k / 14) * Math.PI * 2 + tl.seed * 6 + t * 1.5;
+      const rr = r * (0.7 + 0.3 * Math.sin(k * 2.3 + t * 9));
+      ctx.beginPath(); ctx.arc(x + Math.cos(ang) * rr, cy + Math.sin(ang) * rr * 0.55, 1.3, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(232,240,250,' + (a * 0.5).toFixed(3) + ')';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.ellipse(x, cy, r * 0.8, r * 0.3, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
+function drawBoat() {
+  ctx.fillStyle = '#0a0a0d';
+  ctx.beginPath();
+  ctx.moveTo(432, 648); ctx.lineTo(848, 648);
+  ctx.bezierCurveTo(836, 672, 812, 696, 760, 697);
+  ctx.lineTo(520, 697);
+  ctx.bezierCurveTo(468, 696, 444, 672, 432, 648);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(130,150,180,.10)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(434, 648.5); ctx.lineTo(846, 648.5); ctx.stroke();
+  // Mast and a stay
+  ctx.fillStyle = '#0c0c10'; ctx.fillRect(700, 565, 3, 83);
+  ctx.strokeStyle = 'rgba(140,150,170,.18)';
+  ctx.beginPath(); ctx.moveTo(702, 567); ctx.lineTo(785, 636); ctx.stroke();
+  // Five disciples
+  ctx.fillStyle = '#0b0b0e';
+  for (const x of [480, 520, 560, 750, 790]) {
+    ctx.beginPath(); ctx.arc(x, 618, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x - 5, 625); ctx.lineTo(x + 5, 625); ctx.lineTo(x + 7, 648); ctx.lineTo(x - 7, 648); ctx.closePath(); ctx.fill();
+  }
+}
+
+function drawGlow(g) {
+  const w = g.vis.wordGlow;
+  let boost = 0;
+  if (g.state === 'REACHED') boost = easeOut(g.reachT / 1.2);
+  const r = 270 * (1 + 0.06 * w) * (1 + 0.45 * boost);
+  const a = Math.min(0.85, 0.55 * (1 + 0.2 * w) * (1 + 0.25 * boost));
+  const cy = 66;
+  const gr = ctx.createRadialGradient(CX, cy, 0, CX, cy, r);
+  gr.addColorStop(0, 'rgba(255,238,200,' + a.toFixed(3) + ')');
+  gr.addColorStop(0.22, 'rgba(255,236,196,' + (a * 0.5).toFixed(3) + ')');
+  gr.addColorStop(0.55, 'rgba(255,232,190,' + (a * 0.14).toFixed(3) + ')');
+  gr.addColorStop(1, 'rgba(255,232,190,0)');
+  ctx.fillStyle = gr;
+  ctx.fillRect(CX - r, cy - r, r * 2, r * 2);
+}
+
+function drawReflection(t) {
+  ctx.lineWidth = 1.5;
+  ctx.lineCap = 'butt';
+  for (let i = 0; i < 9; i++) {
+    const y = 107 + i * (113 / 8);   // 107 .. 220
+    const w = lerp(92, 22, i / 8);
+    const a = lerp(0.5, 0.14, i / 8);
+    const sx = Math.sin(t * 2.1 + i * 1.3) * 3;
+    ctx.strokeStyle = 'rgba(232,200,140,' + a.toFixed(3) + ')';
+    ctx.beginPath(); ctx.moveTo(CX - w / 2 + sx, y); ctx.lineTo(CX + w / 2 + sx, y); ctx.stroke();
+  }
+}
+
+function drawJesus(g) {
+  const f = CONFIG.JESUS_FEET_Y, top = f - 55;
+  ctx.save();
+  ctx.shadowColor = 'rgba(255,214,140,.9)';
+  ctx.shadowBlur = (22 + 8 * g.vis.wordGlow) * SCALE;
+  ctx.fillStyle = 'rgba(255,246,226,.95)';
+  ctx.beginPath(); ctx.arc(CX, f - 67, 9.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(CX - 5, top);
+  ctx.bezierCurveTo(CX - 11, top + 4, CX - 12, top + 20, CX - 14, top + 34);
+  ctx.lineTo(CX - 19, f - 2);
+  ctx.quadraticCurveTo(CX, f + 3, CX + 19, f - 2);
+  ctx.lineTo(CX + 14, top + 34);
+  ctx.bezierCurveTo(CX + 12, top + 20, CX + 11, top + 4, CX + 5, top);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+function drawWordBubble(a) {
+  const x = 675, y = 24, w = 118, h = 42;
+  ctx.save();
+  ctx.globalAlpha = a;
+  // One outline: rounded box whose lower-left corner becomes a small tail toward Jesus
+  const r = 11;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.lineTo(x + 14, y + h);
+  ctx.lineTo(x - 8, y + h - 2);
+  ctx.lineTo(x, y + h - 14);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(30,30,36,.32)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(222,190,128,.62)'; ctx.lineWidth = 1; ctx.lineJoin = 'round'; ctx.stroke();
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.font = '21px ' + FONT_SERIF;
+  ctx.fillStyle = 'rgba(255,242,220,.95)';
+  ctx.fillText(TEXT.wordKo, x + 16, y + h / 2 + 1);
+  const kw = ctx.measureText(TEXT.wordKo).width;
+  ctx.font = '14px ' + FONT_SANS;
+  ctx.fillStyle = 'rgba(255,242,220,.6)';
+  ctx.fillText(TEXT.wordEn, x + 16 + kw + 10, y + h / 2 + 2);
+  ctx.restore();
+}
+
+function drawHalo(x, y, word) {
+  const r = word ? 58 : 44;
+  const hg = ctx.createRadialGradient(x, y - 10, 0, x, y - 10, r);
+  hg.addColorStop(0, word ? 'rgba(255,226,160,.42)' : 'rgba(120,160,225,.30)');
+  hg.addColorStop(1, word ? 'rgba(255,226,160,0)' : 'rgba(120,160,225,0)');
+  ctx.fillStyle = hg;
+  ctx.fillRect(x - r, y - 10 - r, r * 2, r * 2);
+}
+
+function drawPeterBody(x, y, word, armsUp) {
+  const col = word ? '#f4e6c6' : '#a9bdd6';
+  ctx.save();
+  if (word) { ctx.shadowColor = 'rgba(255,210,130,.95)'; ctx.shadowBlur = 18 * SCALE; }
+  ctx.fillStyle = col; ctx.strokeStyle = col;
+  ctx.lineWidth = 4.2; ctx.lineCap = 'round';
+  ctx.beginPath();
+  if (armsUp) {
+    // Right arm reaches up for the hand; the left one hangs into the water
+    ctx.moveTo(x - 6, y - 14); ctx.lineTo(x - 16, y + 1);
+    ctx.moveTo(x + 6, y - 14); ctx.lineTo(x + 12, y - 42);
+  } else {
+    ctx.moveTo(x - 6, y - 14); ctx.lineTo(x - 16, y + 1);
+    ctx.moveTo(x + 6, y - 14); ctx.lineTo(x + 16, y + 1);
+  }
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x - 7, y - 18); ctx.lineTo(x + 7, y - 18);
+  ctx.lineTo(x + 13, y + 20); ctx.lineTo(x - 13, y + 20);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y - 29, 9.5, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = word ? 'rgba(150,120,70,.35)' : 'rgba(50,70,100,.35)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.moveTo(x - 9.5, y - 1); ctx.lineTo(x + 9.5, y - 1); ctx.stroke();
+}
+
+function drawTrail(p) {
+  if (p.trailA <= 0.01) return;
+  const top = p.trailTop + 18, bottom = CONFIG.BOAT_Y + 14;
+  if (bottom <= top) return;
+  const gr = ctx.createLinearGradient(0, top, 0, bottom);
+  gr.addColorStop(0, 'rgba(255,236,190,' + (0.42 * p.trailA).toFixed(3) + ')');
+  gr.addColorStop(1, 'rgba(255,236,190,0)');
+  ctx.fillStyle = gr;
+  ctx.fillRect(p.trailX - 10, top, 20, bottom - top);
+}
+
+function drawPeter(g) {
+  const p = g.p, s = g.state;
+  if (s === 'SINKING') { drawSinkingPeter(g); return; }
+  const word = s === 'WORD_WALK' || s === 'REACHED';
+  drawTrail(p);
+  drawHalo(p.x, p.y, word);
+  drawPeterBody(p.x, p.y, word, false);
+}
+
+// Sinks to the waist by sinkEnd; once the hand of light arrives it lifts him back onto the water.
+function sinkGeom(g) {
+  const T = CONFIG.SINK_TIMELINE;
+  const lift = easeInOut((g.sinkT - T.handEnd) / 0.8);
+  const k = easeOut(g.sinkT / T.sinkEnd) * (1 - lift);
+  const sp = g.sinkPos, dy = 6 * k;
+  return { x: sp.x, y: sp.y + dy, waterY: sp.y + lerp(22, 5, k), handX: sp.x + 13, handY: sp.y + dy - 50 };
+}
+
+function drawSinkingPeter(g) {
+  const s = sinkGeom(g);
+  drawHalo(s.x, s.y, false);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0, 0, W, s.waterY); ctx.clip();
+  drawPeterBody(s.x, s.y, false, true);
+  ctx.restore();
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < 3; i++) {
+    const ph = (g.sinkT * 0.9 + i / 3) % 1;
+    const rx = 14 + ph * 26;
+    ctx.strokeStyle = 'rgba(170,200,235,' + (0.45 * (1 - ph)).toFixed(3) + ')';
+    ctx.beginPath(); ctx.ellipse(s.x, s.waterY + 1, rx, rx * 0.22, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
+// A glowing curved arm that reaches from Jesus to Peter's raised hand.
+function drawHandOfLight(g) {
+  const T = CONFIG.SINK_TIMELINE;
+  if (g.sinkT < T.handStart) return;
+  const prog = easeOut((g.sinkT - T.handStart) / (T.handEnd - T.handStart));
+  if (prog <= 0) return;
+  const s = sinkGeom(g);
+  const p0 = { x: CX + 6, y: 68 }, p2 = { x: s.handX, y: s.handY };
+  const c = { x: p0.x + (p2.x - p0.x) * 0.08, y: p0.y + (p2.y - p0.y) * 0.85 };
+  const q = u => ({ x: (1 - u) * (1 - u) * p0.x + 2 * (1 - u) * u * c.x + u * u * p2.x,
+                    y: (1 - u) * (1 - u) * p0.y + 2 * (1 - u) * u * c.y + u * u * p2.y });
+  const N = 40, pts = [];
+  for (let i = 0; i <= N; i++) pts.push(q(prog * i / N));
+  const path = () => { ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (let i = 1; i <= N; i++) ctx.lineTo(pts[i].x, pts[i].y); };
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  path(); ctx.strokeStyle = 'rgba(255,226,160,.20)'; ctx.lineWidth = 16; ctx.stroke();
+  ctx.shadowColor = 'rgba(255,214,140,.95)'; ctx.shadowBlur = 18 * SCALE;
+  path(); ctx.strokeStyle = 'rgba(255,243,214,.96)'; ctx.lineWidth = 6; ctx.stroke();
+  // Open hand at the tip, oriented along the arm
+  const u = prog;
+  const tx = 2 * (1 - u) * (c.x - p0.x) + 2 * u * (p2.x - c.x);
+  const ty = 2 * (1 - u) * (c.y - p0.y) + 2 * u * (p2.y - c.y);
+  const end = pts[N];
+  ctx.translate(end.x, end.y);
+  ctx.rotate(Math.atan2(ty, tx));
+  ctx.fillStyle = 'rgba(255,243,214,.97)'; ctx.strokeStyle = 'rgba(255,243,214,.97)';
+  ctx.beginPath(); ctx.ellipse(4, 0, 12, 11, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.lineWidth = 4; ctx.beginPath();
+  for (let k = -1.5; k <= 1.5; k += 1) { ctx.moveTo(11, k * 4.6); ctx.lineTo(23, k * 6.8); }
+  ctx.moveTo(3, -9); ctx.lineTo(11, -17);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCry(g) {
+  const T = CONFIG.SINK_TIMELINE, st = g.sinkT;
+  if (st < T.cry || st > T.cryEnd) return;
+  const a = clamp(Math.min((st - T.cry) / 0.12, (T.cryEnd - st) / 0.15), 0, 1);
+  const s = sinkGeom(g);
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.font = 'bold 20px ' + FONT_SANS;
+  const w1 = ctx.measureText(TEXT.cryKo).width;
+  ctx.font = '14px ' + FONT_SANS;
+  const w2 = ctx.measureText(TEXT.cryEn).width;
+  const w = Math.max(w1, w2) + 34, h = 60;
+  const right = s.x < W - 300;
+  let bx = right ? s.x + 34 : s.x - 34 - w;
+  bx = clamp(bx, 12, W - 12 - w);
+  const by = Math.max(bx < 180 ? 46 : 12, s.y - 122);   // stay below the HUD in the top-left corner
+  roundRect(bx, by, w, h, 12);
+  ctx.fillStyle = 'rgba(236,241,248,.96)'; ctx.fill();
+  ctx.beginPath();
+  const tx = right ? bx + 14 : bx + w - 14;
+  ctx.moveTo(tx, by + h - 2); ctx.lineTo(tx + (right ? 22 : -22), by + h - 2); ctx.lineTo(s.x + (right ? 14 : -14), s.y - 46);
+  ctx.closePath(); ctx.fill();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  ctx.font = 'bold 20px ' + FONT_SANS; ctx.fillStyle = '#17202c';
+  ctx.fillText(TEXT.cryKo, bx + 17, by + 22);
+  ctx.font = '14px ' + FONT_SANS; ctx.fillStyle = '#3c4858';
+  ctx.fillText(TEXT.cryEn, bx + 17, by + 44);
+  ctx.restore();
+}
+
+function drawCaptionBox(lineKo, lineEn, a, sub, y) {
+  if (a <= 0) return;
+  const w = 780, h = 103, x = CX - w / 2;
+  if (y === undefined) y = 548;
+  ctx.save();
+  ctx.globalAlpha = a;
+  roundRect(x, y, w, h, 14);
+  ctx.fillStyle = 'rgba(5,9,16,.80)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.10)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  let fs = 30;
+  ctx.font = fs + 'px ' + FONT_SERIF;
+  while (ctx.measureText(lineKo).width > w - 48 && fs > 18) { fs -= 1; ctx.font = fs + 'px ' + FONT_SERIF; }
+  ctx.shadowColor = 'rgba(255,205,130,.75)'; ctx.shadowBlur = 14 * SCALE;
+  ctx.fillStyle = 'rgba(255,244,222,1)';
+  ctx.fillText(lineKo, CX, y + 39);
+  ctx.shadowBlur = 0;
+  ctx.font = '16px ' + FONT_SANS;
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.fillText(lineEn, CX, y + 76);
+  if (sub) { ctx.font = '14px ' + FONT_SANS; ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.fillText(sub, CX, y + h + 28); }
+  ctx.restore();
+}
+
+function vignetteAmount(g) {
+  const T = CONFIG.SINK_TIMELINE, V = CONFIG.VIGNETTE;
+  if (g.state === 'SINKING') {
+    const st = g.sinkT;
+    if (st < T.sinkEnd) return V[0] * st / T.sinkEnd;
+    if (st < T.handStart) return V[0];
+    if (st < T.handEnd) return lerp(V[0], V[1], (st - T.handStart) / (T.handEnd - T.handStart));
+    return V[1];
+  }
+  if (g.state === 'RESPAWN') return V[1] * (1 - clamp(g.respawnT / (T.end - T.respawn), 0, 1));
+  return 0;
+}
+function drawVignette(v) {
+  ctx.fillStyle = 'rgba(2,5,10,' + (v * 0.55).toFixed(3) + ')';
+  ctx.fillRect(0, 0, W, H);
+  const gr = ctx.createRadialGradient(CX, H / 2, 160, CX, H / 2, 760);
+  gr.addColorStop(0, 'rgba(0,0,0,0)');
+  gr.addColorStop(1, 'rgba(0,0,0,' + v.toFixed(3) + ')');
+  ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+}
+function fadeAmount(g) {
+  const T = CONFIG.SINK_TIMELINE;
+  if (g.state === 'SINKING' && g.sinkT > T.lineEnd) return clamp((g.sinkT - T.lineEnd) / (T.respawn - T.lineEnd), 0, 1);
+  if (g.state === 'RESPAWN') return 1 - clamp(g.respawnT / (T.end - T.respawn), 0, 1);
+  return 0;
+}
+
+function hudTime(g) {
+  const left = Math.max(0, CONFIG.PLAYER_TIME_S - g.turnT);
+  const sec = Math.ceil(left - 1e-6);
+  return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+}
+function drawHUD(g) {
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  ctx.font = '17px ' + FONT_SANS;
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.fillText(TEXT.player(g.playerNum) + ' · ' + hudTime(g), 24, 34);
+  ctx.font = '14px ' + FONT_SANS;
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  ctx.fillText(TEXT.hint, 24, 702);
+}
+
+function drawPill(cx, cy, label, t) {
+  const w = 236, h = 48;
+  roundRect(cx - w / 2, cy - h / 2, w, h, h / 2);
+  ctx.fillStyle = 'rgba(255,228,180,' + (0.10 + 0.04 * Math.sin(t * 2.2)).toFixed(3) + ')';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,220,160,.55)'; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.font = '17px ' + FONT_SANS; ctx.fillStyle = 'rgba(255,244,226,.95)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, cx, cy + 1);
+}
+function drawPanel(x, y, w, h) {
+  roundRect(x, y, w, h, 24);
+  ctx.fillStyle = 'rgba(7,12,21,.86)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1; ctx.stroke();
+}
+function drawTitle(g) {
+  ctx.fillStyle = 'rgba(3,6,12,.55)'; ctx.fillRect(0, 0, W, H);
+  drawPanel(320, 166, 640, 388);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '14px ' + FONT_SANS; ctx.fillStyle = 'rgba(255,255,255,.42)';
+  ctx.fillText(TEXT.ref, CX, 214);
+  ctx.save();
+  ctx.font = '78px ' + FONT_SERIF; ctx.fillStyle = '#fff0d6';
+  ctx.shadowColor = 'rgba(255,205,130,.55)'; ctx.shadowBlur = 26 * SCALE;
+  ctx.fillText(TEXT.title, CX, 296);
+  ctx.restore();
+  ctx.font = '26px ' + FONT_SERIF; ctx.fillStyle = 'rgba(255,240,220,.78)';
+  ctx.fillText(TEXT.titleEn, CX, 362);
+  ctx.font = '17px ' + FONT_SANS; ctx.fillStyle = 'rgba(255,255,255,.62)';
+  ctx.fillText(TEXT.tagline, CX, 416);
+  drawPill(CX, 486, TEXT.start, g.t);
+}
+function drawTurnEnd(g) {
+  ctx.fillStyle = 'rgba(3,6,12,.55)'; ctx.fillRect(0, 0, W, H);
+  drawPanel(360, 236, 560, 248);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.save();
+  ctx.font = '38px ' + FONT_SERIF; ctx.fillStyle = '#fff0d6';
+  ctx.shadowColor = 'rgba(255,205,130,.45)'; ctx.shadowBlur = 18 * SCALE;
+  ctx.fillText(TEXT.next(g.playerNum + 1), CX, 318);
+  ctx.restore();
+  drawPill(CX, 404, TEXT.start, g.t);
+}
+function drawTimeUp() {
+  ctx.fillStyle = 'rgba(3,6,12,.35)'; ctx.fillRect(0, 0, W, H);
+  drawPanel(420, 300, 440, 110);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = '36px ' + FONT_SERIF; ctx.fillStyle = '#fff0d6';
+  ctx.fillText(TEXT.timeUp, CX, 356);
+}
+
+function drawDebug(g, fps) {
+  ctx.save();
+  ctx.font = '12px ui-monospace,Menlo,Consolas,monospace';
+  ctx.textBaseline = 'middle';
+  for (let n = 1; n <= LANES; n++) {
+    ctx.fillStyle = 'rgba(255,230,90,.9)'; ctx.textAlign = 'left';
+    ctx.fillText('L' + n, 4, laneY(n));
+    ctx.textAlign = 'right';
+    // Bottom of each band, so the last lane's label clears the stats panel
+    ctx.fillText('sudden ' + g.suddenP(n).toFixed(2) + ' · ' + Math.round(g.laneSpeed(n)) + 'px/s', W - 6, laneTop(n) + CONFIG.LANE_H - 9);
+  }
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255,80,80,.9)';
+  for (const gs of g.gusts) {
+    const c = coreSpan(gs), cy = laneY(gs.lane);
+    ctx.strokeRect(c[0], cy - CONFIG.GUST_CORE_HALF_H, c[1] - c[0], CONFIG.GUST_CORE_HALF_H * 2);
+  }
+  ctx.strokeStyle = 'rgba(255,170,40,.95)';
+  for (const tl of g.tele) { ctx.beginPath(); ctx.arc(tl.x, laneY(tl.lane), 30, 0, Math.PI * 2); ctx.stroke(); }
+  const p = g.p;
+  ctx.strokeStyle = 'rgba(80,255,120,.95)';
+  ctx.strokeRect(p.x - CONFIG.HITBOX_W / 2, p.y + CONFIG.HITBOX_DY, CONFIG.HITBOX_W, CONFIG.HITBOX_H);
+  // Word timer bar
+  const bx = 440, bw = 400, by = 4, bh = 6;
+  ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(bx, by, bw, bh);
+  if (g.word) {
+    ctx.fillStyle = 'rgba(255,210,120,.95)';
+    ctx.fillRect(bx, by, bw * clamp((g.word.end - g.turnT) / CONFIG.WORD_DURATION_S, 0, 1), bh);
+  } else {
+    const span = g.lastWordStart === null ? CONFIG.WORD_FIRST_AT_S : g.nextWordAt - g.lastWordStart;
+    const left = Math.max(0, g.nextWordAt - g.turnT);
+    ctx.fillStyle = 'rgba(120,170,255,.8)';
+    ctx.fillRect(bx, by, bw * clamp(1 - left / span, 0, 1), bh);
+  }
+  const st = g.stats;
+  const lines = [
+    'state ' + g.state + (g.arming ? ' (arming)' : ''),
+    'turn ' + g.turnT.toFixed(1) + 's  next word ' + Math.max(0, g.nextWordAt - g.turnT).toFixed(1) + 's',
+    'interval ' + g.wordInterval + 's  difficulty x' + g.diff,
+    'still ' + p.stillT.toFixed(2) + 's  lane ' + p.lane + '  col ' + p.col,
+    'heard ' + st.wordsHeard + '  walks ' + st.wordWalks + '  sank ' + st.sinks + '  best ' + st.maxLane + (st.reached ? ' ✓' : ''),
+    'line ' + CONFIG.SINK_LINE + '  mute ' + (g.muted ? 'on' : 'off') + '  fps ' + fps.toFixed(0),
+  ];
+  ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(W - 330, 44, 324, 14 + lines.length * 16);
+  ctx.fillStyle = 'rgba(220,255,220,.95)'; ctx.textAlign = 'left';
+  lines.forEach((l, i) => ctx.fillText(l, W - 322, 54 + i * 16));
+  if (g.t - g.toastT < 2) {
+    // Under the HUD, away from Jesus and the Word bubble
+    ctx.fillStyle = 'rgba(0,0,0,.7)'; ctx.fillRect(18, 46, 240, 24);
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'left'; ctx.fillText(g.toastMsg, 28, 58);
+  }
+  ctx.restore();
+}
+
+function drawSelftestPanel(r) {
+  ctx.save();
+  const lines = r ? r.results.map(x => (x.pass ? 'PASS ' : 'FAIL ') + x.id + ' ' + x.name) : ['self-test running…'];
+  if (r) lines.unshift(r.pass ? 'SELF-TEST: ALL PASS' : 'SELF-TEST: FAILURES');
+  ctx.font = '12px ui-monospace,Menlo,Consolas,monospace';
+  ctx.fillStyle = 'rgba(0,0,0,.75)';
+  ctx.fillRect(8, 48, 600, 12 + lines.length * 16);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  lines.forEach((l, i) => { ctx.fillStyle = /FAIL/.test(l) ? '#ff8a8a' : '#b8f5c0'; ctx.fillText(l, 16, 60 + i * 16); });
+  ctx.restore();
+}
+
+function render(g, fps) {
+  const kx = canvas.width / W, ky = canvas.height / H;
+  ctx.setTransform(kx, 0, 0, ky, 0, 0);
+  SCALE = kx;
+  const t = g.t, s = g.state;
+  drawBackground(t);
+  for (const tl of g.tele) drawTelegraph(tl, t);
+  for (const gs of g.gusts) drawGust(gs, t);
+  drawBoat();
+  const v = vignetteAmount(g);
+  if (v > 0) drawVignette(v);
+  drawGlow(g);
+  drawReflection(t);
+  drawJesus(g);
+  drawPeter(g);
+  if (g.vis.bubbleA > 0.01) drawWordBubble(g.vis.bubbleA);
+  drawRain(t);
+  if (s !== 'TITLE' && s !== 'TURN_END') drawHUD(g);   // under the cry bubble, never white on white
+  if (s === 'SINKING') {
+    const T = CONFIG.SINK_TIMELINE;
+    drawHandOfLight(g);
+    drawCry(g);
+    // Lane 1 lies under the caption box, so the box moves up and keeps Peter and the hand in view.
+    const capY = g.sinkPos.y > laneTop(1) && Math.abs(g.sinkPos.x - CX) < 430 ? 300 : 548;
+    if (g.sinkT >= T.lineStart) drawCaptionBox(g.sinkLine.ko, g.sinkLine.en, clamp((g.sinkT - T.lineStart) / 0.25, 0, 1), TEXT.restart, capY);
+  }
+  if (s === 'REACHED') drawCaptionBox(TEXT.v27.ko, TEXT.v27.en, clamp(g.reachT / 0.3, 0, 1));
+  if (s === 'TIMEUP') drawTimeUp();
+  if (s === 'TITLE') drawTitle(g);
+  if (s === 'TURN_END') drawTurnEnd(g);
+  const f = fadeAmount(g);
+  if (f > 0) { ctx.fillStyle = 'rgba(0,0,0,' + f.toFixed(3) + ')'; ctx.fillRect(0, 0, W, H); }
+  if (g.debug) drawDebug(g, fps);
+  if (SELFTEST) drawSelftestPanel(window.__selftest);
+}
+
+// ============================================================================
+// Self-test (?selftest=1): headless simulations, results logged to the console
+// ============================================================================
+const SELFTEST = new URLSearchParams(location.search).get('selftest') === '1';
+
+// Time window [ts, te] in which a gust core overlaps the span [a, b] (linear motion).
+function overlapWindow(x0, dir, len, v, a, b) {
+  const c = len * CONFIG.GUST_CORE_FRAC;
+  if (v === 0) {
+    const lo = dir > 0 ? x0 - c : x0, hi = dir > 0 ? x0 : x0 + c;
+    return hi < a || lo > b ? null : [-Infinity, Infinity];
+  }
+  return dir > 0 ? [(a - x0) / v, (b + c - x0) / v] : [(x0 - b) / v, (x0 + c - a) / v];
+}
+// True when standing at x in lane would be hit during [t0, t1] from now.
+function danger(g, lane, x, t0, t1, react) {
+  if (lane < 1 || lane > LANES) return false;
+  const a = x - CONFIG.HITBOX_W / 2, b = x + CONFIG.HITBOX_W / 2;
+  const v = g.t < g.calmUntil ? 0 : g.laneSpeed(lane) * g.calmMul;
+  for (const gs of g.gusts) {
+    if (gs.lane !== lane) continue;
+    const w = overlapWindow(gs.x, gs.dir, gs.len, v, a, b);
+    if (w && w[0] <= t1 && w[1] >= t0) return true;
+  }
+  for (const tl of g.tele) {
+    if (tl.lane !== lane) continue;
+    if (react && tl.dur - tl.t < react) continue;   // not noticed yet
+    const dir = laneDir(lane);
+    const len = tl.wide ? CONFIG.WIDE_GUST_LEN : CONFIG.GUST_LEN[lane - 1];
+    const lead = tl.wide ? tl.x + dir * CONFIG.WIDE_GUST_LEAD : tl.x + dir * len * CONFIG.SUDDEN_LEAD_FRAC;
+    const tf = Math.max(0, tl.t);
+    const w = overlapWindow(lead - dir * v * tf, dir, len, v, a, b);
+    if (w && Math.max(w[0], tf) <= Math.min(w[1], t1) && w[1] >= t0) return true;
+  }
+  return false;
+}
+// Greedy dodging bot: steps up when the lane above looks clear for 0.6 s, sidesteps when threatened.
+// Optional bot.react (s) delays noticing telegraphs; bot.every (ticks) slows decisions.
+function botTick(g, bot) {
+  if (bot.key) { g.keyUp(bot.key); bot.key = null; }
+  if (g.state !== 'PLAYING') return;
+  const p = g.p;
+  if (g.t < p.cooldownUntil) return;
+  if (bot.every && (bot.tick = (bot.tick || 0) + 1) % bot.every !== 0) return;
+  const R = bot.react || 0;
+  const threatened = p.lane >= 1 && danger(g, p.lane, p.x, 0, 0.3, R);
+  let act = null;
+  const upClear = p.lane >= LANES ? true : !danger(g, p.lane + 1, p.x, 0, 0.6, R);
+  if (upClear && !(p.lane >= LANES && threatened)) act = 'ArrowUp';
+  if (!act && (threatened || (p.lane >= 1 && p.stillT > 1.4))) {
+    const order = bot.rng() < 0.5 ? [-1, 1] : [1, -1];
+    const maxC = p.lane === 0 ? CONFIG.BOAT_MAX_COL : MAX_COL;
+    for (const dx of order) {
+      const c = p.col + dx;
+      if (Math.abs(c) > maxC) continue;
+      if (!danger(g, p.lane, colX(c), 0, 0.45, R)) { act = dx < 0 ? 'ArrowLeft' : 'ArrowRight'; break; }
+    }
+    if (!act && p.lane >= 1 && !(p.lane === 1 && Math.abs(p.col) > CONFIG.BOAT_MAX_COL) && !danger(g, p.lane - 1, p.x, 0, 0.45, R)) act = 'ArrowDown';
+    if (!act) act = p.lane >= LANES ? 'ArrowUp' : (order[0] < 0 ? 'ArrowLeft' : 'ArrowRight');
+  }
+  if (act) { g.keyDown(act, false); bot.key = act; }
+}
+
+async function runSelfTest() {
+  const STEP = 1 / 60;
+  const results = [];
+  const log = (...a) => console.log('[selftest]', ...a);
+  const check = (id, name, pass, detail) => { results.push({ id: id, name: name, pass: !!pass, detail: detail }); log(pass ? 'PASS' : 'FAIL', id, name, '—', detail); };
+  const make = seed => { const g = new Game({ rng: mulberry32(seed) }); g.startTurn(); return g; };
+  const until = (g, pred, maxS) => { const n = Math.round(maxS / STEP); for (let i = 0; i < n; i++) { if (pred(g)) return true; g.update(STEP); } return pred(g); };
+  const run = (g, secs, each) => { const n = Math.round(secs / STEP); for (let i = 0; i < n; i++) { if (each) each(g); g.update(STEP); } };
+  const yieldUI = () => new Promise(r => setTimeout(r, 0));
+  const t0 = performance.now();
+  log('start', location.href);
+
+  // 1 + 6 + 7: greedy bot, sinking order, stats bookkeeping
+  const RUNS = 200;
+  let reachedRuns = 0, seqOK = true, captionOK = true, statsOK = true, sinksTotal = 0, upper = 0;
+  const hist = new Array(LANES + 1).fill(0);
+  for (let r = 0; r < RUNS; r++) {
+    const g = make(1000 + r);
+    const bot = { key: null, rng: mulberry32(5000 + r) };
+    const ev = [];
+    const cnt = { wordOpen: 0, walk: 0, sink: 0 };
+    let maxSeen = 0;
+    g.on((type, d) => {
+      ev.push(type);
+      if (cnt[type] !== undefined) cnt[type]++;
+      if ((type === 'step' || type === 'walkExit') && d.lane > maxSeen) maxSeen = d.lane;
+      if (type === 'reached') maxSeen = LANES;
+      if (d && typeof d.text === 'string' && /game\s?over/i.test(d.text)) captionOK = false;
+    });
+    let guard = 0;
+    while (g.state !== 'TURN_END' && guard++ < 60 * 120) { botTick(g, bot); g.update(STEP); }
+    const st = g.stats;
+    if (st.reached) reachedRuns++;
+    hist[st.maxLane]++;
+    if (st.maxLane >= 5) upper++;
+    sinksTotal += st.sinks;
+    if (st.wordsHeard !== cnt.wordOpen || st.wordWalks !== cnt.walk || st.sinks !== cnt.sink || st.maxLane !== maxSeen) statsOK = false;
+    const want = ['cry', 'hand', 'line', 'respawn'];
+    for (let k = 0; k < ev.length; k++) {
+      if (ev[k] !== 'sink') continue;
+      let w = 0;
+      for (let j = k + 1; j < ev.length && w < 4; j++) {
+        if (ev[j] === 'sink') break;
+        if (ev[j] === want[w]) w++;
+        else if (want.indexOf(ev[j]) >= 0) { seqOK = false; break; }
+      }
+      if (w < 4) seqOK = false;
+    }
+    if (r % 10 === 9) await yieldUI();
+  }
+  check(1, 'Greedy dodging bot never reaches Jesus (' + RUNS + ' runs)', reachedRuns === 0,
+        'reached ' + reachedRuns + '/' + RUNS + '; best-lane histogram [0..8] = ' + hist.join(','));
+
+  // 1b: a human-like bot (0.3 s reaction, decides every 0.15 s) should usually get to lane 5 or higher
+  const hh = new Array(LANES + 1).fill(0);
+  let hReached = 0, hUpper = 0;
+  for (let r = 0; r < RUNS; r++) {
+    const g = make(9000 + r);
+    const bot = { key: null, rng: mulberry32(11000 + r), react: 0.3, every: 9 };
+    let guard = 0;
+    while (g.state !== 'TURN_END' && guard++ < 60 * 120) { botTick(g, bot); g.update(STEP); }
+    hh[g.stats.maxLane]++;
+    if (g.stats.reached) hReached++;
+    if (g.stats.maxLane >= 5) hUpper++;
+    if (r % 10 === 9) await yieldUI();
+  }
+  check('1b', 'Human-like bot regularly reaches lane 5 or higher, never Jesus', hReached === 0 && hUpper / RUNS >= 0.5,
+        (100 * hUpper / RUNS).toFixed(0) + '% of turns reached lane ≥ 5; reached ' + hReached + '; histogram [0..8] = ' + hh.join(','));
+
+  // 2: press-and-hold up at a Word window from the boat
+  let ok2 = 0, tMin = Infinity, tMax = -Infinity;
+  for (let r = 0; r < 200; r++) {
+    const g = make(2000 + r), rr = mulberry32(7000 + r);
+    until(g, x => !!x.word, 20);
+    const ws = g.word.start, off = rr() * (CONFIG.WORD_DURATION_S - 0.1);
+    until(g, x => x.turnT >= ws + off, 3);
+    g.keyDown('ArrowUp', false);
+    const k0 = g.turnT;
+    until(g, x => x.state === 'REACHED' || x.state === 'SINKING', 10);
+    const dt = g.turnT - k0;
+    tMin = Math.min(tMin, dt); tMax = Math.max(tMax, dt);
+    if (g.state === 'REACHED' && Math.abs(dt - CONFIG.WORD_WALK_CROSS_S) <= 0.3) ok2++;
+    if (r % 50 === 49) await yieldUI();
+  }
+  check(2, 'Hold ↑ in a Word window from the boat reaches Jesus in 5 ± 0.3 s', ok2 === 200,
+        ok2 + '/200; time range ' + tMin.toFixed(3) + '–' + tMax.toFixed(3) + ' s');
+
+  // 3: holding up from before a window (with browser auto-repeat) and taps never start a walk,
+  //    including a release and re-press that land between two ticks (slow frames coalesce them)
+  let walks3 = 0, walks3b = 0, walks3c = 0;
+  for (let r = 0; r < 20; r++) {
+    const g = make(3000 + r);
+    until(g, x => x.turnT >= 4.0, 5);
+    g.keyDown('ArrowUp', false);
+    let f = 0;
+    run(g, 26, x => { if (++f % 3 === 0) x.keyDown('ArrowUp', true); });
+    walks3 += g.stats.wordWalks;
+    const h = make(3100 + r);
+    until(h, x => !!x.word, 20);
+    run(h, 0.05);
+    h.keyDown('ArrowUp', false); run(h, 0.2); h.keyUp('ArrowUp');
+    run(h, 2.5);
+    walks3b += h.stats.wordWalks;
+    // a tap at the end of a window, re-pressed in the same frame after it closed
+    const k = make(3200 + r);
+    until(k, x => !!x.word, 20);
+    const we = k.word.end;
+    until(k, x => x.turnT >= we - 0.05, 3);
+    k.keyDown('ArrowUp', false); run(k, 0.28); k.keyUp('ArrowUp'); k.keyDown('ArrowUp', false); run(k, 0.5); k.keyUp('ArrowUp');
+    walks3c += k.stats.wordWalks;
+    // two 0.2 s taps chained in the same frame inside an open window
+    const m = make(3300 + r);
+    until(m, x => !!x.word, 20);
+    run(m, 0.05);
+    m.keyDown('ArrowUp', false); run(m, 0.2); m.keyUp('ArrowUp'); m.keyDown('ArrowUp', false); run(m, 0.2); m.keyUp('ArrowUp');
+    run(m, 0.5);
+    walks3c += m.stats.wordWalks;
+  }
+  check(3, 'Holding ↑ from before a window (or tapping) does not start a Word Walk', walks3 === 0 && walks3b === 0 && walks3c === 0,
+        'walks while pre-held ' + walks3 + ', from taps ' + walks3b + ', from same-frame re-presses ' + walks3c);
+
+  // 4: leaving the walk restores normal rules at once
+  let ok4 = 0, tele4 = 0, n4 = 0;
+  const exits = ['release', 'ArrowLeft', 'ArrowRight', 'ArrowDown'];
+  for (let r = 0; r < 200; r++) {
+    const g = make(4000 + r);
+    until(g, x => !!x.word, 20);
+    g.keyDown('ArrowUp', false);
+    until(g, x => x.state === 'WORD_WALK', 1);
+    run(g, 2.0);
+    if (g.state !== 'WORD_WALK') continue;
+    n4++;
+    const how = exits[r % 4];
+    if (how === 'release') g.keyUp('ArrowUp'); else g.keyDown(how, false);
+    const p = g.p;
+    const normal = g.state === 'PLAYING' && !g.arming && Math.abs(p.y - laneY(p.lane)) < 1e-9;
+    if (g.tele.length > 0) tele4++;
+    const dir = laneDir(p.lane);
+    g.gusts.push({ lane: p.lane, dir: dir, x: p.x + dir * 20, len: 160, seed: 0, alpha: 1, formA: 1, whooshed: true });
+    g.update(STEP);
+    if (normal && g.state === 'SINKING') ok4++;
+  }
+  const rate4 = n4 ? tele4 / n4 : 0;
+  check(4, 'Releasing ↑ (or ← → ↓) mid-walk restores normal rules instantly', n4 === 200 && ok4 === n4 && rate4 > 0.8 && rate4 < 0.97,
+        ok4 + '/' + n4 + ' snapped + collidable next tick; sudden gust after exit ' + (100 * rate4).toFixed(0) + '% (target 90%)');
+
+  // 5: standing still on the sea
+  let ok5 = 0;
+  for (let r = 0; r < 20; r++) {
+    const g = make(5000 + r);
+    g.spawnEnabled = false; g.gusts = []; g.tele = [];
+    run(g, 0.5);
+    g.keyDown('ArrowUp', false); g.update(STEP); g.keyUp('ArrowUp');
+    const onSea = g.p.lane === 1;
+    run(g, 1.9);
+    const notYet = g.state === 'PLAYING';
+    let reason = '';
+    g.on((type, d) => { if (type === 'sink') reason = d.reason; });
+    run(g, 0.15);
+    if (onSea && notYet && g.state === 'SINKING' && reason === 'still') ok5++;
+  }
+  check(5, 'Standing still for 2 s on the sea triggers sinking', ok5 === 20, ok5 + '/20');
+
+  // 6: sinking order, and no failure screen text anywhere
+  const srcClean = !/game\s?over/i.test(document.documentElement.outerHTML);
+  check(6, 'Sinking order is always cry → hand → line → respawn; no failure-screen text', seqOK && captionOK && srcClean && sinksTotal > 0,
+        sinksTotal + ' sinkings checked; order ' + (seqOK ? 'ok' : 'BROKEN') + '; captions ' + (captionOK ? 'ok' : 'BAD') + '; page text ' + (srcClean ? 'ok' : 'BAD'));
+
+  // 7: per-player stats (debug overlay only; no scoreboard) match the session's events,
+  //    on the bot turns above and on 40 walking turns (odd: walk to Jesus; even: let go mid-walk)
+  let walked7 = 0, reached7 = 0, stats7OK = true;
+  for (let r = 0; r < 40; r++) {
+    const g = make(6000 + r), rr = mulberry32(6500 + r);
+    const bot = { key: null, rng: mulberry32(6800 + r) };
+    const cnt = { wordOpen: 0, walk: 0, sink: 0, reached: 0 };
+    let maxSeen = 0;
+    g.on((type, d) => {
+      if (cnt[type] !== undefined) cnt[type]++;
+      if ((type === 'step' || type === 'walkExit') && d.lane > maxSeen) maxSeen = d.lane;
+      if (type === 'reached') maxSeen = LANES;
+    });
+    until(g, x => !!x.word, 20);
+    g.keyDown('ArrowUp', false);
+    until(g, x => x.state === 'REACHED', r % 2 ? 6 : 0.6 + 3.5 * rr());
+    g.keyUp('ArrowUp');
+    let guard = 0;
+    while (g.state !== 'TURN_END' && guard++ < 60 * 120) { botTick(g, bot); g.update(STEP); }
+    const st = g.stats;
+    if (cnt.walk > 0) walked7++;
+    if (cnt.reached > 0) reached7++;
+    if (st.wordsHeard !== cnt.wordOpen || st.wordWalks !== cnt.walk || st.sinks !== cnt.sink ||
+        st.maxLane !== maxSeen || st.reached !== (cnt.reached > 0)) stats7OK = false;
+  }
+  const ok7 = statsOK && stats7OK && walked7 === 40 && reached7 === 20;
+  check(7, 'Per-player stats match the session events', ok7,
+        (statsOK ? RUNS + ' bot turns consistent' : 'bot-turn mismatch') + '; walking turns ' +
+        (stats7OK ? 'consistent' : 'MISMATCH') + ' (' + walked7 + ' walked, ' + reached7 + ' reached Jesus)');
+
+  // 8: zero network requests
+  const res = (performance.getEntriesByType && performance.getEntriesByType('resource')) || [];
+  const ext = Array.prototype.filter.call(document.querySelectorAll('[src],[href]'),
+    el => /^(https?:)?\/\//i.test(el.getAttribute('src') || el.getAttribute('href') || ''));
+  check(8, 'No network requests (runs from file://)', res.length === 0 && ext.length === 0,
+        'protocol ' + location.protocol + '; resource entries ' + res.length + '; external refs ' + ext.length);
+
+  const pass = results.every(x => x.pass);
+  log(pass ? 'ALL PASS' : 'SOME CHECKS FAILED', '(' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)');
+  return { done: true, pass: pass, results: results };
+}
+
+// ============================================================================
+// Boot: canvas sizing, input, main loop
+// ============================================================================
+const game = new Game();
+
+game.on((type, d) => {
+  switch (type) {
+    case 'whoosh': Sound.whoosh(d.x); break;
+    case 'sink': Sound.splash(); break;
+    case 'mute': Sound.setMuted(d.muted); break;
+    case 'reached': Sound.setWind(0.3); break;
+    case 'turnStart': case 'respawn': Sound.setWind(1); break;
+    case 'title': Sound.setWind(0.7); break;
+    case 'turnEnd': Sound.setWind(0.55); break;
+  }
+});
+
+// Wind level per state (matches the event wiring above); used when audio starts mid-state.
+function windLevel(s) { return s === 'TITLE' ? 0.7 : s === 'TURN_END' ? 0.55 : s === 'REACHED' ? 0.3 : 1; }
+
+let lastDpr = 0;
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  lastDpr = dpr;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const s = Math.min(vw / W, vh / H);
+  const cw = Math.max(1, Math.floor(W * s)), ch = Math.max(1, Math.floor(H * s));
+  canvas.style.width = cw + 'px';
+  canvas.style.height = ch + 'px';
+  canvas.style.left = Math.floor((vw - cw) / 2) + 'px';
+  canvas.style.top = Math.floor((vh - ch) / 2) + 'px';
+  canvas.width = Math.max(1, Math.round(cw * dpr));
+  canvas.height = Math.max(1, Math.round(ch * dpr));
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Tab would move focus into the browser toolbar and silently cut the game off from the keyboard.
+const BLOCK = { ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, Space: 1, Tab: 1 };
+// Esc is not a user activation; creating audio without one only leaves it suspended with warnings.
+function mayUnlock(e) {
+  return !SELFTEST && e.code !== 'Escape' && (!navigator.userActivation || navigator.userActivation.isActive);
+}
+window.addEventListener('keydown', e => {
+  if (e.isComposing) return;
+  if (BLOCK[e.code]) e.preventDefault();
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  game.keyDown(e.code || e.key, e.repeat, e.key);   // first, so an opening M mutes before any sound exists
+  if (mayUnlock(e)) Sound.unlock(windLevel(game.state));
+});
+window.addEventListener('keyup', e => {
+  if (e.key === 'Meta') game.releaseAll();           // macOS drops key-ups for keys released while Cmd is held
+  else game.keyUp(e.code || e.key);
+});
+window.addEventListener('blur', () => game.releaseAll());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { game.releaseAll(); Sound.suspend(); }   // no storm noise behind the slides
+  else Sound.resume();
+});
+canvas.addEventListener('pointerdown', () => {
+  if (game.state === 'TITLE' || game.state === 'TURN_END' || game.state === 'TIMEUP') {
+    game.keyDown('Enter', false, 'Enter');
+    game.keyUp('Enter');
+  }
+  canvas.focus();
+});
+// Touch grants user activation only on release, so audio starts on pointerup (mouse is still active then).
+window.addEventListener('pointerup', () => { if (!SELFTEST) Sound.unlock(windLevel(game.state)); });
+
+const STEP = 1 / 60;
+let last = performance.now(), acc = 0, fps = 60;
+function frame(now) {
+  // Moving the window to a screen with another pixel ratio fires no resize event.
+  if (Math.min(window.devicePixelRatio || 1, 3) !== lastDpr) resize();
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0) fps = fps * 0.95 + (1 / dt) * 0.05;
+  if (dt > 0.25) dt = 0.25;
+  acc += dt;
+  let n = 0;
+  while (acc >= STEP && n < 20) { game.update(STEP); acc -= STEP; n++; }
+  render(game, fps);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(t => { last = t; frame(t); });
+canvas.focus();
+
+if (SELFTEST) {
+  window.__selftest = null;
+  setTimeout(() => {
+    runSelfTest().then(r => { window.__selftest = r; })
+      .catch(err => { console.warn('[selftest] crashed', err); window.__selftest = { done: true, pass: false, results: [{ id: 0, name: 'crash: ' + err, pass: false }] }; });
+  }, 30);
+}
+</script>
+</body>
+</html>

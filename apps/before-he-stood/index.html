@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f1d1a">
+<meta name="color-scheme" content="dark">
+<meta name="description" content="마태복음 9:1–8을 세 인물의 눈으로 따라가는 한영 이야기 게임 · A bilingual story game on Matthew 9:1–8">
+<title>그가 일어나기 전 · Before He Stood</title>
+<!-- Optional web fonts. media="print" keeps the request from blocking the page (a network that stalls
+     instead of failing must never hold the game); onload switches the stylesheet on when it arrives. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&amp;family=IBM+Plex+Sans+KR:wght@400;500;600&amp;display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&amp;family=IBM+Plex+Sans+KR:wght@400;500;600&amp;display=swap"></noscript>
+<link rel="stylesheet" href="css/style.css?v=5ba63277ae">
+</head>
+<body data-screen="title">
+<div id="app" class="app">
+  <div id="stage" class="stage" data-pov="normal" aria-hidden="true">
+    <div class="art" id="art">
+      <div class="art__sway">
+        <div class="art__layer" id="artA"></div>
+        <div class="art__layer" id="artB"></div>
+      </div>
+    </div>
+    <div class="veil" id="veil"></div>
+    <div class="light" id="light" data-level="off"></div>
+  </div>
+
+  <div class="cast" id="cast" aria-hidden="true"></div>
+
+  <div class="caption" id="caption" hidden></div>
+  <div class="echo" id="echo" hidden></div>
+  <div class="pin" id="pin" hidden></div>
+
+  <section class="play" id="play" hidden>
+    <button class="advance" id="advance" type="button" data-testid="advance" aria-label="다음 · Next"></button>
+    <div class="card" id="card" hidden></div>
+    <div class="snip" id="snip" hidden></div>
+    <div class="dock" id="dock">
+      <div class="reply" id="reply" aria-live="polite"></div>
+      <div class="panel" id="panel">
+        <div class="plate" id="plate" hidden></div>
+        <div class="text" id="text" data-testid="textbox" aria-live="polite"></div>
+        <div class="ref" id="ref" hidden></div>
+        <span class="more" id="more" aria-hidden="true"></span>
+      </div>
+      <div class="choices" id="choices" hidden></div>
+      <div class="pressbox" id="pressbox" hidden></div>
+      <div class="actions" id="actions" hidden></div>
+    </div>
+  </section>
+
+  <main class="screen" id="screen"></main>
+
+  <header class="topbar" id="topbar" hidden></header>
+  <div class="settings" id="settings" hidden></div>
+  <div class="modal" id="modal" hidden></div>
+  <aside class="debug" id="debug" hidden></aside>
+
+  <noscript><p class="noscript">이 게임은 자바스크립트가 필요해요. · This game needs JavaScript.</p></noscript>
+</div>
+
+<script src="data/meta.js?v=5ba63277ae"></script>
+<script src="data/characters.js?v=5ba63277ae"></script>
+<script src="data/scripture.js?v=5ba63277ae"></script>
+<script src="data/common.js?v=5ba63277ae"></script>
+<script src="data/ui-strings.js?v=5ba63277ae"></script>
+<script src="data/routes/scribe.js?v=5ba63277ae"></script>
+<script src="data/routes/friend.js?v=5ba63277ae"></script>
+<script src="data/routes/asher.js?v=5ba63277ae"></script>
+<script src="js/engine.js?v=5ba63277ae"></script>
+<script src="js/art.js?v=5ba63277ae"></script>
+<script src="js/portraits.js?v=5ba63277ae"></script>
+<script src="js/ui.js?v=5ba63277ae"></script>
+<script src="js/main.js?v=5ba63277ae"></script>
+</body>
+</html>
