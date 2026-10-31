@@ -72,6 +72,7 @@ const CONFIG = {
   // step up comes within RUN_GAP_S, and from the last lane a step up reaches Him. Stopping or stepping aside
   // ends it (and, as when he saw the wind, a sudden gust may come). Out on the sea, steps are ordinary.
   RUN_GAP_S: 0.5,
+  RUN_STEP_S: 0.3,             // in a run he goes up at most a lane every RUN_STEP_S (a quicker tap waits its turn)
   WAY_START_S: 2.5,            // the way is clear for a run that leaves the bow while the bubble shows,
   WAY_PACE_S: 0.34,            // going up one lane every WAY_PACE_S or faster (three taps a second and a margin),
   WAY_PRE_S: 0.1,              // and this much more at both ends
@@ -328,8 +329,8 @@ class Game {
       // Stepping out of the boat at the bow while He speaks starts a run; in the run a step up goes on toward
       // Him, and from the last lane it reaches Him. Out on the sea, steps up are ordinary steps.
       if (this.p.col === 0 && (this.run || (this.word && this.p.lane === 0))) {
-        if (this.p.lane >= LANES) { if (this.t >= this.p.cooldownUntil - 1e-9) this.reach(); return; }
-        if (this.tryStep(0, 1)) this.runStep();
+        if (this.run && this.t < this.p.cooldownUntil - 1e-9) this.run.queued = true;   // a quick tap waits its turn
+        else this.runUp();
         return;
       }
       this.tryStep(0, 1);
@@ -343,8 +344,15 @@ class Game {
 
   // A step up along the open way; the first one (while He speaks) starts the run.
   runStep() {
-    if (!this.run) { this.run = { last: this.turnT }; this.stats.comeRuns++; this.emit('run', { lane: this.p.lane }); }
+    if (!this.run) { this.run = { last: this.turnT, queued: false }; this.stats.comeRuns++; this.emit('run', { lane: this.p.lane }); }
     this.run.last = this.turnT;
+    this.run.queued = false;
+    this.p.cooldownUntil = Math.max(this.p.cooldownUntil, this.t + CONFIG.RUN_STEP_S);   // a steady walk
+  }
+  // The next step up on the way; from the last lane it reaches Him.
+  runUp() {
+    if (this.p.lane >= LANES) { this.reach(); return; }
+    if (this.tryStep(0, 1)) this.runStep();
   }
   // He stopped, or stepped aside: the way closes and, as when he saw the wind, a sudden gust may come at once.
   endRun(reason) {
@@ -358,9 +366,9 @@ class Game {
   // as He speaks (at, on the gust clock) could be there until a run leaving as late as WAY_START_S, a lane
   // every WAY_PACE_S, has gone through it (with WAY_PRE_S to spare at both ends).
   planWay(at) {
-    const A = [], B = [], cd = CONFIG.STEP_COOLDOWN_MS / 1000;
+    const A = [], B = [];
     for (let n = 1; n <= LANES; n++) {
-      A[n] = at + (n - 1) * cd - CONFIG.WAY_PRE_S;
+      A[n] = at + (n - 1) * CONFIG.RUN_STEP_S - CONFIG.WAY_PRE_S;      // a run reaches lane n no sooner
       B[n] = at + CONFIG.WAY_START_S + n * CONFIG.WAY_PACE_S + CONFIG.WAY_PRE_S;
     }
     this.ways.push({ at: at, A: A, B: B, done: false });
@@ -582,6 +590,10 @@ class Game {
     if (this.arming) {
       if (!this.held.ArrowUp) this.arming = null;
       else if (this.turnT - this.arming.t0 >= CONFIG.WORD_HOLD_ARM_S - 1e-6) { this.startWalk(); return; }
+    }
+    if (this.run && this.run.queued && this.t >= this.p.cooldownUntil - 1e-9) {        // a tap that waited its turn
+      this.runUp();
+      if (this.state !== 'PLAYING') return;
     }
     if (this.run && this.turnT - this.run.last > CONFIG.RUN_GAP_S + 1e-9) this.endRun('stop');   // he stopped
     if (this.arming) return;                       // stepping out: wind cannot touch him yet
@@ -2009,7 +2021,7 @@ async function runSelfTest() {
     for (let s = 0; s < 4; s++) { KF.tap(); KF.adv(s < 3 ? 0.25 : 0.02); }
     KF.G.down(7, 200, 500, KF.clock()); KF.adv(0.27);               // rests: a hold forms, no step
     KF.G.move(7, 200, 485); KF.G.move(7, 200, 470); KF.G.up(7);     // then flicks up: the fifth step
-    for (let s = 0; s < 5 && kf.state === 'PLAYING'; s++) { KF.tap(); KF.adv(0.25); }
+    for (let s = 0; s < 14 && kf.state === 'PLAYING'; s++) { KF.tap(); KF.adv(0.25); }
     KF.adv(1.0);
     if (shortRest && dodged && kk.p.lane === 1 && kk.p.col === -1 && kk.stats.wordWalks === 0 && kf.state === 'REACHED') k9++;
     // c: taps and quick swipes during the windows never walk
@@ -2122,17 +2134,28 @@ async function runSelfTest() {
   };
   const press = (g, code, key) => { g.keyDown(code, false, key); g.keyUp(code); };
   const wordN = (g, k) => { for (let i = 0; i < k; i++) { until(g, x => !x.word, 20); until(g, x => !!x.word, 30); } };
-  let a10 = 0, k10 = 0, b10 = 0, c10 = 0, cs10 = 0, d10 = 0, e10 = 0, f10 = 0, g10 = 0, h10 = 0, i10 = 0, j10 = 0;
+  let a10 = 0, q10 = 0, k10 = 0, b10 = 0, c10 = 0, cs10 = 0, d10 = 0, e10 = 0, f10 = 0, g10 = 0, h10 = 0, i10 = 0, j10 = 0;
   for (let r = 0; r < 200; r++) {
     const rr = mulberry32(12500 + r);
-    // a: from the bow, leaving at any moment while the bubble shows, three to seven steps a second
+    // a: from the bow, leaving at any moment while the bubble shows, tapping three to twelve times a second
     const g = make(12000 + r);
     until(g, x => !!x.word, 20);
     const ws = g.word.start;
     const off = rr() * (CONFIG.WORD_DURATION_S - 0.05);        // drawn once: any moment while the bubble shows
     until(g, x => x.turnT >= ws + off, 3);
-    tapEvery(g, 0.15 + (1 / 3 - 0.15) * rr(), 9);
+    tapEvery(g, 0.08 + (1 / 3 - 0.08) * rr(), 9);
     if (g.state === 'REACHED' && g.stats.comeRuns === 1 && g.stats.wordWalks === 0) a10++;
+    // a3: tapping as fast as one can, he still goes a lane every RUN_STEP_S, never quicker and never slower
+    const fq = make(12150 + r), steps = [];
+    fq.on((type) => { if (type === 'step') steps.push(fq.turnT); });
+    until(fq, x => !!x.word, 20);
+    tapEvery(fq, 0.06, 6);
+    let even = fq.state === 'REACHED' && steps.length === LANES;
+    for (let s = 1; s < steps.length; s++) {
+      const d = steps[s] - steps[s - 1];
+      if (d < CONFIG.RUN_STEP_S - 1e-6 || d > CONFIG.RUN_STEP_S + 2 * STEP + 1e-6) even = false;
+    }
+    if (even) q10++;
     // a2: the slowest run the teacher is told about: leaving as the bubble ends, three steps a second
     const sl = make(12100 + r);
     until(sl, x => !!x.word, 20);
@@ -2203,7 +2226,7 @@ async function runSelfTest() {
     // h: while He speaks, no gust crosses the way up from the bow in a lane while a run could be in it
     const m = make(13400 + r);
     until(m, x => !!x.word, 20);
-    const st = m.word.start, hw = CONFIG.HITBOX_W / 2, cd = CONFIG.STEP_COOLDOWN_MS / 1000;
+    const st = m.word.start, hw = CONFIG.HITBOX_W / 2, cd = CONFIG.RUN_STEP_S;
     let crossed = false;
     for (let i = 0; i < 60 * 6; i++) {
       m.update(STEP);
@@ -2238,9 +2261,9 @@ async function runSelfTest() {
     if (r % 20 === 19) await yieldUI();
   }
   check(10, '"Come": the wind flows as always, yet while He speaks the way from the bow comes clear; stepping out and going up without stopping reaches Jesus, nothing else does',
-        a10 === 200 && k10 === 200 && b10 === 200 && c10 === 200 && d10 === 200 && e10 === 200 && f10 === 200 && g10 === 200 && h10 === 200 &&
+        a10 === 200 && q10 === 200 && k10 === 200 && b10 === 200 && c10 === 200 && d10 === 200 && e10 === 200 && f10 === 200 && g10 === 200 && h10 === 200 &&
         i10 === 200 && j10 === 200,
-        'run from the bow ' + a10 + '/200, slowest promised run ' + k10 + '/200, out on the sea never ' + b10 + '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 +
+        'run from the bow ' + a10 + '/200, steady when tapping fast ' + q10 + '/200, slowest promised run ' + k10 + '/200, out on the sea never ' + b10 + '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 +
         '), stepping aside ends it ' + d10 + '/200, never through without the Word ' + e10 + '/200, beside the bow never ' + f10 +
         '/200, wind flows as always ' + g10 + '/200, way clear while He speaks ' + h10 + '/200, after a difficulty key ' + i10 +
         '/200, after a late interval key ' + j10 + '/200');
