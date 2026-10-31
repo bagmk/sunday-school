@@ -12,10 +12,10 @@ A small "app store" of Bible games for a youth Sunday-school class, played toget
 | 본문 · Passage | 제목 · Title | 종류 | 폴더 |
 | --- | --- | --- | --- |
 | 마태복음 9:1–8 · Matthew 9:1–8 | 그가 일어나기 전 · Before He Stood | 이야기 게임 (세 인물, 약 20분) | [`apps/before-he-stood/`](apps/before-he-stood/) |
-| 마태복음 14:22–33 · Matthew 14:22–33 | 새벽 3시 · The Fourth Watch | 건너기 게임 (한 사람 60초, 키보드) | [`apps/fourth-watch/`](apps/fourth-watch/) |
+| 마태복음 14:22–33 · Matthew 14:22–33 | 새벽 3시 · The Fourth Watch | 건너기 게임 (한 사람 60초, 키보드 · 휴대폰) | [`apps/fourth-watch/`](apps/fourth-watch/) |
 
 - **그가 일어나기 전**: 자세한 사용법과 내용 수정 방법은 [`apps/before-he-stood/README.md`](apps/before-he-stood/README.md)에 있어요.
-- **새벽 3시**: 파일 하나(`apps/fourth-watch/index.html`)로 된 게임이에요. 진행 방법은 아래에 있어요.
+- **새벽 3시**: 수업용 키보드 버전(`apps/fourth-watch/index.html`, 가로 화면)과 휴대폰 버전(`apps/fourth-watch/mobile.html`, 세로 화면, 스와이프)이 있어요. 둘 다 파일 하나로 되어 있고, 규칙은 같아요. 진행 방법은 아래에 있어요.
 
 ## 새벽 3시 · The Fourth Watch — 진행 (선생님용)
 
@@ -34,14 +34,25 @@ A small "app store" of Bible games for a youth Sunday-school class, played toget
 | `1` / `2` / `3` | 난이도 쉬움 / 보통 / 어려움 |
 
 - 게임에 숨겨진 규칙은 수업 전에 `D` 화면을 켜고 직접 연습해 보세요. 학생들에게는 미리 말하지 않아요.
-- 자동 검사: 주소 끝에 `?selftest=1`을 붙여 열면 시뮬레이션 검사가 돌고 결과가 브라우저 콘솔과 화면 왼쪽 위에 나와요.
+- 자동 검사: 주소 끝에 `?selftest=1`을 붙여 열면 시뮬레이션 검사가 돌고 결과가 브라우저 콘솔과 화면 왼쪽 위에 나와요 (두 버전 모두).
+
+### 휴대폰 버전 · 스와이프
+
+- 앱 목록의 「휴대폰 · Phone」 버튼이나 `apps/fourth-watch/mobile.html`로 열어요. 휴대폰에서 카드를 누르면 자동으로 휴대폰 버전이 열려요.
+- 조작: 짧게 탭 = 위로 한 칸, 스와이프 = 그 방향으로 한 칸. 손가락을 화면에 대고 있으면 ↑를 누르고 있는 것과 같고, 떼면 키를 뗀 것과 같아요. 그래서 숨겨진 규칙도 키보드와 똑같이 적용돼요.
+- 오른쪽 위 스피커 버튼으로 소리를 끄고 켜요.
+- 키보드 버전도 터치 화면(태블릿, 터치 노트북)에서는 같은 스와이프로 움직일 수 있어요.
+
+### 소리
+
+- 바람 소리를 부드러운 파도 소리로 바꿨어요 (고음 쉭쉭거림 제거, 물에 빠질 때 '딱' 소리 제거). 소리는 모두 브라우저에서 만들어지고, 오디오 파일은 없어요.
 
 ## 폴더 구조
 
 ```
 index.html                 앱 목록 (첫 화면)
 apps/before-he-stood/      그가 일어나기 전 (이야기 게임, 도구와 테스트 포함)
-apps/fourth-watch/         새벽 3시 (단일 파일 게임)
+apps/fourth-watch/         새벽 3시 (index.html: 키보드 버전, mobile.html: 휴대폰 버전)
 ```
 
 ## 출처

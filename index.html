@@ -83,12 +83,23 @@
     background: rgba(255, 228, 180, .08);
   }
   .app:hover .btn, .app:focus-visible .btn { background: rgba(255, 228, 180, .16); }
+  /* A card with two versions: the whole card opens the one that suits the device, and both buttons stay clickable */
+  .app.multi { position: relative; }
+  .app.multi .cover { position: absolute; inset: 0; border-radius: 22px; z-index: 0; }
+  .app.multi .cover:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+  .app.multi .open { position: relative; z-index: 1; gap: 10px; flex-wrap: wrap; }
+  .app.multi .btns { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .app.multi .btn { margin-left: 0; text-decoration: none; background: transparent; border-color: rgba(255, 255, 255, .18); }
+  .app.multi .btn.primary { background: rgba(255, 228, 180, .10); border-color: var(--gold-line); }
+  .app.multi .btn:hover, .app.multi .btn:focus-visible { background: rgba(255, 228, 180, .18); outline: none; }
   footer { margin-top: 44px; text-align: center; color: var(--faint); font-size: 12.5px; line-height: 1.7; }
   footer p { margin: 0 0 6px; }
   @media (max-width: 420px) {
     .wrap { padding: 36px 16px 28px; }
     .icon { width: 72px; height: 72px; border-radius: 18px; }
     .ref { font-size: 22px; }
+    .app.multi .btns { width: 100%; flex-wrap: nowrap; }
+    .app.multi .btn { flex: 1 1 0; text-align: center; padding: 9px 6px; font-size: 14px; white-space: nowrap; }
   }
 </style>
 </head>
@@ -142,7 +153,8 @@
       </li>
 
       <li>
-        <a class="app" href="apps/fourth-watch/index.html">
+        <div class="app multi">
+          <a class="cover" href="apps/fourth-watch/index.html" aria-label="새벽 3시 · The Fourth Watch"></a>
           <div class="top">
             <div class="icon" aria-hidden="true">
               <svg viewBox="0 0 88 88">
@@ -178,11 +190,16 @@
           <p class="desc">바람 부는 새벽 바다, 배에서 예수님께로 건너가세요.<br>A stormy sea before dawn: cross from the boat to Jesus.</p>
           <ul class="chips">
             <li>건너기 게임 · Arcade</li>
-            <li>키보드 ← ↑ → · Keyboard</li>
+            <li>키보드 · 스와이프 · Keyboard · Swipe</li>
             <li>한 사람 60초 · 60 s each</li>
           </ul>
-          <div class="open"><span class="badge">NEW</span><span class="btn">열기 · Open ▶</span></div>
-        </a>
+          <div class="open"><span class="badge">NEW</span>
+            <span class="btns">
+              <a class="btn" data-kind="phone" href="apps/fourth-watch/mobile.html">휴대폰 · Phone ▶</a>
+              <a class="btn" data-kind="keyboard" href="apps/fourth-watch/index.html">키보드 · Keyboard ▶</a>
+            </span>
+          </div>
+        </div>
       </li>
     </ul>
   </main>
@@ -193,9 +210,20 @@
   </footer>
 </div>
 <script>
+  // A phone opens the phone version of a two-version card; tablets and computers open the keyboard one.
+  (function () {
+    var phone = !!(window.matchMedia && matchMedia('(pointer: coarse)').matches) &&
+                Math.min(screen.width, screen.height) < 600;
+    Array.prototype.forEach.call(document.querySelectorAll('.app.multi'), function (card) {
+      var pick = card.querySelector('.btn[data-kind="' + (phone ? 'phone' : 'keyboard') + '"]');
+      if (!pick) return;
+      card.querySelector('.cover').setAttribute('href', pick.getAttribute('href'));
+      pick.classList.add('primary');
+    });
+  })();
   // Arrow keys move between apps (handy with a presentation remote); Enter opens the focused app.
   (function () {
-    var apps = Array.prototype.slice.call(document.querySelectorAll('.app'));
+    var apps = Array.prototype.slice.call(document.querySelectorAll('a.app, .app .cover'));
     document.addEventListener('keydown', function (e) {
       var i = apps.indexOf(document.activeElement);
       var step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1 : 0;

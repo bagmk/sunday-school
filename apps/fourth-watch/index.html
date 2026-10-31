@@ -7,9 +7,9 @@
 <meta name="theme-color" content="#060b15">
 <title>새벽 3시 · The Fourth Watch</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
-  body { -webkit-user-select: none; user-select: none; }
-  #c { position: absolute; display: block; outline: none; touch-action: manipulation; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; touch-action: none; }
+  body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  #c { position: absolute; display: block; outline: none; touch-action: none; }
 </style>
 </head>
 <body>
@@ -64,6 +64,9 @@ const CONFIG = {
                    lineStart: 1.8, lineEnd: 3.8, respawn: 4.15, end: 4.5 },
   VIGNETTE: [0.55, 0.72],
   PREWARM_S: 16,               // pre-simulate the wind so the sea is full when a turn starts
+  SPAWN_MARGIN: 20,            // gusts enter and leave this far beyond the screen edge
+  // Touch (swipe) controls, in CSS px / seconds
+  SWIPE_PX: 22, LOOK_PX: 40, STILL_PX: 10, LONG_PRESS_S: 0.28,
 };
 
 const TEXT = {
@@ -328,7 +331,7 @@ class Game {
     const dir = laneDir(n);
     const j = CONFIG.GUST_LEN_JITTER;
     const len = CONFIG.GUST_LEN[n - 1] * (1 - j + 2 * j * this.rng());
-    this.gusts.push({ lane: n, dir: dir, x: dir > 0 ? -20 : CONFIG.W + 20, len: len,
+    this.gusts.push({ lane: n, dir: dir, x: dir > 0 ? -CONFIG.SPAWN_MARGIN : CONFIG.W + CONFIG.SPAWN_MARGIN, len: len,
                       seed: this.rng(), alpha: 1, formA: 1, whooshed: false, sudden: false });
   }
 
@@ -519,7 +522,8 @@ class Game {
       let w = 0;
       for (let i = 0; i < this.gusts.length; i++) {
         const g = this.gusts[i];
-        const alive = g.dir > 0 ? g.x - g.len < CONFIG.W + 40 : g.x + g.len > -40;
+        const edge = CONFIG.SPAWN_MARGIN + 20;
+        const alive = g.dir > 0 ? g.x - g.len < CONFIG.W + edge : g.x + g.len > -edge;
         if (alive) this.gusts[w++] = g;
       }
       this.gusts.length = w;
@@ -559,13 +563,117 @@ class Game {
 }
 
 // ============================================================================
+// Touch gestures: a swipe is an arrow press, a short tap is one step up, and a finger that stays
+// still counts as holding ↑. Lifting the finger releases the key. One finger at a time.
+// ============================================================================
+class Gestures {
+  constructor(game, cfg) {
+    this.game = game;
+    this.SWIPE = cfg.SWIPE_PX;      // CSS px before a touch becomes a swipe
+    this.LOOK = cfg.LOOK_PX;        // CSS px a held finger must travel sideways or down to press another arrow
+    this.STILL = cfg.STILL_PX;      // a long press must stay within this radius
+    this.LONG = cfg.LONG_PRESS_S;   // seconds before a still finger counts as holding ↑
+    this.g = null;
+  }
+  press(code) { this.game.keyDown(code, false, code); }
+  // Returns true when the touch was taken (the caller then prevents the browser default).
+  down(id, x, y, t) {
+    if (this.g && this.g.id === id) this.cancel(id);   // its release was missed (e.g. outside the window)
+    if (this.g) return false;
+    const s = this.game.state;
+    if (s === 'TITLE' || s === 'TURN_END' || s === 'TIMEUP') {
+      // Starts or continues; this touch is used up, so lifting it never steps.
+      this.game.keyDown('Enter', false, 'Enter');
+      this.game.keyUp('Enter');
+      this.g = { id: id, done: true };
+      return true;
+    }
+    this.g = { id: id, x0: x, y0: y, t0: t, ax: x, ay: y, code: null, still: true, done: false };
+    return true;
+  }
+  move(id, x, y) {
+    const g = this.g;
+    if (!g || g.id !== id || g.done) return;
+    if (!g.code) {
+      const dx = x - g.x0, dy = y - g.y0, d = Math.hypot(dx, dy);
+      if (d > this.STILL) g.still = false;
+      if (d < this.SWIPE) return;
+      g.code = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'ArrowLeft' : 'ArrowRight') : (dy < 0 ? 'ArrowUp' : 'ArrowDown');
+      g.ax = x; g.ay = y;
+      this.press(g.code);
+      return;
+    }
+    if (g.code !== 'ArrowUp') return;
+    // Holding ↑: moving further up changes nothing; a clear sideways or downward drag presses that arrow.
+    const dx = x - g.ax, dy = y - g.ay;
+    if (-dy >= Math.abs(dx)) { if (dy < 0) { g.ax = x; g.ay = y; } return; }
+    if (Math.hypot(dx, dy) < this.LOOK) return;
+    const c = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'ArrowLeft' : 'ArrowRight') : 'ArrowDown';
+    this.press(c);
+    this.game.keyUp(c);
+    g.ax = x; g.ay = y;
+  }
+  // Called every frame: a finger held still long enough becomes a held ↑.
+  tick(t) {
+    const g = this.g;
+    if (!g || g.done || g.code || !g.still || t - g.t0 < this.LONG) return;
+    g.code = 'ArrowUp';
+    g.ax = g.x0; g.ay = g.y0;
+    this.press('ArrowUp');
+  }
+  up(id) {
+    const g = this.g;
+    if (!g || g.id !== id) return;
+    this.g = null;
+    if (g.done) return;
+    if (!g.code) { this.press('ArrowUp'); this.game.keyUp('ArrowUp'); return; }   // a tap: one step up
+    this.game.keyUp(g.code);
+  }
+  cancel(id) {
+    const g = this.g;
+    if (!g || (id !== undefined && g.id !== id)) return;
+    this.g = null;
+    if (g.code && !g.done) this.game.keyUp(g.code);
+  }
+}
+
+// ============================================================================
 // Audio (procedural; the Word itself is silent)
 // ============================================================================
 function quiet(p) { if (p && typeof p.catch === 'function') p.catch(() => {}); }
 
+// Seamlessly looping noise: 'pink' (1/f, soft surf) or 'brown' (deep rumble). The tail is
+// cross-faded into the head so the loop point never clicks; RMS is normalised to 0.25.
+function makeNoise(c, seconds, kind) {
+  const sr = c.sampleRate, L = Math.floor(sr * seconds), F = Math.floor(sr * 0.4);
+  const raw = new Float32Array(L + F);
+  let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, br = 0;
+  for (let i = 0; i < L + F; i++) {
+    const w = Math.random() * 2 - 1;
+    if (kind === 'brown') { br = (br + 0.02 * w) / 1.02; raw[i] = br; continue; }
+    // Paul Kellet's pink-noise filter
+    b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759;
+    b2 = 0.96900 * b2 + w * 0.1538520; b3 = 0.86650 * b3 + w * 0.3104856;
+    b4 = 0.55000 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.0168980;
+    raw[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362; b6 = w * 0.115926;
+  }
+  let mean = 0;
+  for (let i = 0; i < raw.length; i++) mean += raw[i];
+  mean /= raw.length;
+  let ss = 0;
+  for (let i = 0; i < raw.length; i++) { raw[i] -= mean; ss += raw[i] * raw[i]; }
+  const k = 0.25 / (Math.sqrt(ss / raw.length) || 1);
+  const buf = c.createBuffer(1, L, sr), d = buf.getChannelData(0);
+  for (let i = F; i < L; i++) d[i] = raw[i] * k;
+  for (let i = 0; i < F; i++) { const u = i / F; d[i] = (raw[i] * Math.sqrt(u) + raw[L + i] * Math.sqrt(1 - u)) * k; }
+  return buf;
+}
+
 const Sound = {
-  ctx: null, master: null, windBus: null, noise: null, muted: false, lastWhoosh: 0,
-  // Builds the graph on the first user gesture; level is the wind level for the current state.
+  ctx: null, master: null, windBus: null, pink: null, brown: null, layers: null,
+  muted: false, lastWhoosh: 0, voices: 0,
+  MASTER: 0.9,
+  // Builds the graph on the first user gesture; level is the sea level for the current state.
   unlock(level) {
     if (this.ctx) { this.resume(); return; }
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -573,63 +681,124 @@ const Sound = {
     let c;
     try { c = new AC(); } catch (e) { return; }
     this.ctx = c;
+    // master -> soft clipper -> speakers. The clipper is linear below 0.6 (-4.4 dBFS) and only rounds off
+    // rare overlapping peaks; unlike a compressor it adds no make-up gain.
     this.master = c.createGain();
-    this.master.gain.value = this.muted ? 0 : 0.8;
-    this.master.connect(c.destination);
-    const len = Math.floor(c.sampleRate * 2);
-    const buf = c.createBuffer(1, len, c.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-    this.noise = buf;
-    // Continuous wind: band-passed noise with slow amplitude and colour LFOs.
-    const src = c.createBufferSource(); src.buffer = buf; src.loop = true;
-    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 650; bp.Q.value = 0.8;
-    const amp = c.createGain(); amp.gain.value = 0.16;
-    const lfo = c.createOscillator(); lfo.frequency.value = 0.13;
-    const lfoG = c.createGain(); lfoG.gain.value = 0.07;
-    const lfo2 = c.createOscillator(); lfo2.frequency.value = 0.047;
-    const lfo2G = c.createGain(); lfo2G.gain.value = 230;
-    lfo.connect(lfoG); lfoG.connect(amp.gain);
-    lfo2.connect(lfo2G); lfo2G.connect(bp.frequency);
-    this.windBus = c.createGain(); this.windBus.gain.value = level === undefined ? 0.7 : level;
-    src.connect(bp); bp.connect(amp); amp.connect(this.windBus); this.windBus.connect(this.master);
-    src.start(); lfo.start(); lfo2.start();
+    this.master.gain.value = this.muted ? 0 : this.MASTER;
+    const clip = c.createWaveShaper(), curve = new Float32Array(1024);
+    for (let i = 0; i < curve.length; i++) {
+      const x = i / (curve.length - 1) * 2 - 1, a = Math.abs(x);
+      curve[i] = a < 0.6 ? x : Math.sign(x) * (0.6 + 0.4 * Math.tanh((a - 0.6) / 0.4));
+    }
+    clip.curve = curve;
+    this.master.connect(clip); clip.connect(c.destination);
+    this.pink = makeNoise(c, 6.3, 'pink');
+    this.brown = makeNoise(c, 5.1, 'brown');
+    this.windBus = c.createGain();
+    this.windBus.gain.value = level === undefined ? 0.7 : level;
+    this.windBus.connect(this.master);
+    // A faint low swell under everything (laptop speakers and headphones; phones barely play it)
+    const rumble = c.createBufferSource(); rumble.buffer = this.brown; rumble.loop = true;
+    const rl = c.createBiquadFilter(); rl.type = 'lowpass'; rl.frequency.value = 160; rl.Q.value = -3;
+    const rg = c.createGain(); rg.gain.value = 0.03;
+    rumble.connect(rl); rl.connect(rg); rg.connect(this.windBus);
+    rumble.start(0, Math.random() * 4);
+    // Two independent surf layers, slightly left and right
+    this.layers = [this.surf(-0.35, 0.4), this.surf(0.35, 0.34)];
+    this.update();
+  },
+  // One surf layer: pink noise, high-passed (no boom), then two soft low-pass filters (no hiss)
+  // whose cutoff and level swell with every wave.
+  surf(pan, level) {
+    const c = this.ctx;
+    const src = c.createBufferSource(); src.buffer = this.pink; src.loop = true;
+    const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 260; hp.Q.value = -3;
+    const f1 = c.createBiquadFilter(), f2 = c.createBiquadFilter();
+    for (const f of [f1, f2]) { f.type = 'lowpass'; f.Q.value = -3; f.frequency.value = 420; }
+    const g = c.createGain(); g.gain.value = level * 0.4;
+    src.connect(hp); hp.connect(f1); f1.connect(f2); f2.connect(g);
+    let out = g;
+    if (c.createStereoPanner) { const p = c.createStereoPanner(); p.pan.value = pan; g.connect(p); out = p; }
+    out.connect(this.windBus);
+    src.start(0, Math.random() * 6);
+    return { f: [f1, f2], g: g, level: level, next: c.currentTime + Math.random() * 2.5 };
+  },
+  // Schedules each layer's next wave a little ahead; called every frame and cheap when nothing is due.
+  update() {
+    const c = this.ctx;
+    if (!c || !this.layers) return;
+    const now = c.currentTime;
+    for (const L of this.layers) {
+      while (L.next < now + 1.5) {
+        const t = Math.max(L.next, now + 0.02);
+        const rise = 1.4 + Math.random() * 1.3, fall = 2.6 + Math.random() * 2.4;
+        const crest = 0.55 + Math.random() * 0.45;
+        L.g.gain.setTargetAtTime(L.level * crest, t, rise / 3);
+        L.g.gain.setTargetAtTime(L.level * 0.4, t + rise, fall / 3);
+        for (const f of L.f) {
+          f.frequency.setTargetAtTime(420 + 900 * crest, t, rise / 3);
+          f.frequency.setTargetAtTime(420, t + rise, fall / 3);
+        }
+        L.next = t + rise + fall * (0.5 + Math.random() * 0.4);
+      }
+    }
   },
   suspend() { if (this.ctx && this.ctx.state === 'running') quiet(this.ctx.suspend()); },
   resume() { if (this.ctx && this.ctx.state !== 'running' && this.ctx.state !== 'closed') quiet(this.ctx.resume()); },
   setWind(level) { if (this.ctx) this.windBus.gain.setTargetAtTime(level, this.ctx.currentTime, 0.4); },
-  setMuted(m) { this.muted = m; if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : 0.8, this.ctx.currentTime, 0.05); },
-  burst(dur, type, f0, f1, q, peak, pan) {
-    const c = this.ctx, t0 = c.currentTime;
-    const src = c.createBufferSource(); src.buffer = this.noise;
-    const f = c.createBiquadFilter(); f.type = type; f.Q.value = q;
-    f.frequency.setValueAtTime(f0, t0); f.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+  setMuted(m) { this.muted = m; if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : this.MASTER, this.ctx.currentTime, 0.05); },
+  // A soft swish when a gust passes close by: band-passed pink noise, no hiss above ~1.5 kHz.
+  whoosh(x) {
+    const c = this.ctx;
+    if (!c || this.voices >= 3) return;
+    const t0 = c.currentTime;
+    if (t0 - this.lastWhoosh < 0.22) return;
+    this.lastWhoosh = t0;
+    const src = c.createBufferSource(); src.buffer = this.pink;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 0.8;
+    bp.frequency.setValueAtTime(300, t0);
+    bp.frequency.exponentialRampToValueAtTime(760, t0 + 0.32);
+    bp.frequency.exponentialRampToValueAtTime(380, t0 + 0.9);
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1500; lp.Q.value = -3;
     const g = c.createGain();
     g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(peak, t0 + dur * 0.35);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    src.connect(f); f.connect(g);
+    g.gain.exponentialRampToValueAtTime(0.7, t0 + 0.3);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.9);
+    src.connect(bp); bp.connect(lp); lp.connect(g);
     let out = g;
-    if (c.createStereoPanner && pan !== undefined) { const pn = c.createStereoPanner(); pn.pan.value = pan; g.connect(pn); out = pn; }
+    if (c.createStereoPanner) {
+      const pn = c.createStereoPanner(); pn.pan.value = clamp((x - CX) / CX, -0.7, 0.7);
+      g.connect(pn); out = pn;
+    }
     out.connect(this.master);
-    src.start(t0, Math.random() * 1.2);
-    src.stop(t0 + dur + 0.05);
+    this.voices++;
+    src.onended = () => { this.voices = Math.max(0, this.voices - 1); };
+    src.start(t0, Math.random() * 5);
+    src.stop(t0 + 0.95);
   },
-  whoosh(x) {
-    if (!this.ctx) return;
-    const now = this.ctx.currentTime;
-    if (now - this.lastWhoosh < 0.12) return;
-    this.lastWhoosh = now;
-    this.burst(0.55, 'bandpass', 450, 1400, 1.2, 0.34, clamp((x - CX) / CX, -0.8, 0.8));
-  },
+  // Falling into the water: a low, soft plunge (every onset ramps, so nothing clicks).
   splash() {
-    if (!this.ctx) return;
-    const c = this.ctx, t0 = c.currentTime;
-    this.burst(0.7, 'lowpass', 1800, 260, 0.7, 0.55);
+    const c = this.ctx;
+    if (!c) return;
+    const t0 = c.currentTime;
+    const src = c.createBufferSource(); src.buffer = this.brown;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = -3;
+    lp.frequency.setValueAtTime(1100, t0); lp.frequency.exponentialRampToValueAtTime(240, t0 + 0.9);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.45, t0 + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.0);
+    src.connect(lp); lp.connect(g); g.connect(this.master);
+    src.start(t0, Math.random() * 3);
+    src.stop(t0 + 1.05);
     const o = c.createOscillator(); o.type = 'sine';
-    o.frequency.setValueAtTime(120, t0); o.frequency.exponentialRampToValueAtTime(45, t0 + 0.35);
-    const g = c.createGain(); g.gain.setValueAtTime(0.35, t0); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
-    o.connect(g); g.connect(this.master); o.start(t0); o.stop(t0 + 0.45);
+    o.frequency.setValueAtTime(110, t0); o.frequency.exponentialRampToValueAtTime(48, t0 + 0.35);
+    const og = c.createGain();
+    og.gain.setValueAtTime(0.0001, t0);
+    og.gain.exponentialRampToValueAtTime(0.18, t0 + 0.02);
+    og.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+    o.connect(og); og.connect(this.master);
+    o.start(t0); o.stop(t0 + 0.45);
   },
 };
 
@@ -1510,6 +1679,81 @@ async function runSelfTest() {
   check(8, 'No network requests (runs from file://)', res.length === 0 && ext.length === 0,
         'protocol ' + location.protocol + '; resource entries ' + res.length + '; external refs ' + ext.length);
 
+  // 9: swipe controls follow the same rules (a swipe is an arrow press, lifting the finger releases it)
+  const touch = g => {
+    const G = new Gestures(g, CONFIG);
+    let clock = 100;
+    const adv = s => { for (let i = 0, n = Math.round(s / STEP); i < n; i++) { clock += STEP; G.tick(clock); g.update(STEP); } };
+    const swipe = (dx, dy, hold) => {
+      G.down(1, 200, 500, clock); G.move(1, 200 + dx / 2, 500 + dy / 2); G.move(1, 200 + dx, 500 + dy);
+      if (!hold) G.up(1);
+    };
+    const tap = () => { G.down(1, 200, 500, clock); G.up(1); };
+    return { G: G, adv: adv, swipe: swipe, tap: tap, clock: () => clock };
+  };
+  const n9 = 40;
+  let a9 = 0, b9 = 0, c9 = 0, d9 = 0, e9 = 0, f9 = 0, g9 = 0, t9lo = Infinity, t9hi = -Infinity;
+  for (let r = 0; r < n9; r++) {
+    // a: swipe up from the boat while He speaks and keep the finger down
+    const g = make(9500 + r), T = touch(g);
+    until(g, x => !!x.word, 20);
+    T.adv(mulberry32(9600 + r)() * 2.0);
+    T.swipe(0, -60, true);
+    const k0 = g.turnT;
+    for (let i = 0; i < 600 && g.state !== 'REACHED' && g.state !== 'SINKING'; i++) T.adv(STEP);
+    const dt = g.turnT - k0;
+    t9lo = Math.min(t9lo, dt); t9hi = Math.max(t9hi, dt);
+    if (g.state === 'REACHED' && Math.abs(dt - CONFIG.WORD_WALK_CROSS_S) <= 0.3) a9++;
+    // b: a finger pressed and held still while He speaks also walks
+    const h = make(9700 + r), U = touch(h);
+    until(h, x => !!x.word, 20);
+    U.G.down(1, 200, 500, U.clock());
+    U.adv(6);
+    if (h.stats.reached) b9++;
+    // c: taps and quick swipes during the windows never walk
+    const k = make(9800 + r), V = touch(k);
+    for (let i = 0; i < 300; i++) {
+      if (k.word && i % 7 === 0) { if (i % 2) V.tap(); else V.swipe(0, -40, false); }
+      V.adv(0.1);
+      if (k.state === 'SINKING') V.adv(4.6);
+    }
+    c9 += k.stats.wordWalks;
+    // d: a finger resting since before the window does not walk
+    const m = make(9900 + r), X = touch(m);
+    until(m, x => x.turnT >= 3, 5);
+    X.G.down(1, 200, 500, X.clock());
+    X.adv(10);
+    d9 += m.stats.wordWalks;
+    // e: dragging sideways while walking is looking at the wind: the walk ends at once
+    const q = make(10000 + r), Y = touch(q);
+    until(q, x => !!x.word, 20);
+    Y.swipe(0, -60, true);
+    Y.adv(1.5);
+    const walking = q.state === 'WORD_WALK';
+    Y.G.move(1, 270, 440);
+    if (walking && q.state === 'PLAYING') e9++;
+    Y.G.up(1);
+    // f: a tap on the title starts the turn and does not also step
+    const tg = new Game({ rng: mulberry32(10100 + r) }), Z = touch(tg);
+    Z.tap();
+    if (tg.state === 'PLAYING' && tg.p.lane === 0) f9++;
+    // g: one swipe is one step; a tap is one step up
+    const s0 = make(10200 + r), S = touch(s0);
+    s0.spawnEnabled = false; s0.gusts = []; s0.tele = [];
+    S.swipe(0, -50, false); S.adv(0.2);
+    const l1 = s0.p.lane;
+    S.swipe(50, 0, false); S.adv(0.2);
+    const c1 = s0.p.col;
+    S.swipe(0, 50, false); S.adv(0.2);
+    const l0 = s0.p.lane;
+    S.tap(); S.adv(0.2);
+    if (l1 === 1 && c1 === 1 && l0 === 0 && s0.p.lane === 1) g9++;
+    if (r % 10 === 9) await yieldUI();
+  }
+  check(9, 'Swipe controls: swipe ↑ and hold reaches Jesus; taps and resting fingers do not', a9 === n9 && b9 === n9 && c9 === 0 && d9 === 0 && e9 === n9 && f9 === n9 && g9 === n9,
+        'hold ' + a9 + '/' + n9 + ' (' + t9lo.toFixed(3) + '–' + t9hi.toFixed(3) + ' s), still press ' + b9 + '/' + n9 + ', walks from taps ' + c9 +
+        ', from a resting finger ' + d9 + ', look ends walk ' + e9 + '/' + n9 + ', title tap ' + f9 + '/' + n9 + ', one swipe one step ' + g9 + '/' + n9);
+
   const pass = results.every(x => x.pass);
   log(pass ? 'ALL PASS' : 'SOME CHECKS FAILED', '(' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)');
   return { done: true, pass: pass, results: results };
@@ -1569,18 +1813,32 @@ window.addEventListener('keyup', e => {
   if (e.key === 'Meta') game.releaseAll();           // macOS drops key-ups for keys released while Cmd is held
   else game.keyUp(e.code || e.key);
 });
-window.addEventListener('blur', () => game.releaseAll());
+window.addEventListener('blur', () => { gestures.cancel(); game.releaseAll(); });
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { game.releaseAll(); Sound.suspend(); }   // no storm noise behind the slides
   else Sound.resume();
 });
-canvas.addEventListener('pointerdown', () => {
+canvas.addEventListener('pointerdown', e => {
+  if (TOUCHY[e.pointerType]) return;                 // fingers and pens go to the swipe controls below
   if (game.state === 'TITLE' || game.state === 'TURN_END' || game.state === 'TIMEUP') {
     game.keyDown('Enter', false, 'Enter');
     game.keyUp('Enter');
   }
   canvas.focus();
 });
+// Swipe controls for touch screens (a mouse keeps its old meaning: click to start or continue)
+const TOUCHY = { touch: 1, pen: 1 };
+const gestures = new Gestures(game, CONFIG);
+const nowS = () => performance.now() / 1000;
+window.addEventListener('pointerdown', e => {
+  if (TOUCHY[e.pointerType] && gestures.down(e.pointerId, e.clientX, e.clientY, nowS())) e.preventDefault();
+}, { passive: false });
+window.addEventListener('pointermove', e => { if (TOUCHY[e.pointerType]) gestures.move(e.pointerId, e.clientX, e.clientY); });
+window.addEventListener('pointerup', e => { if (TOUCHY[e.pointerType]) gestures.up(e.pointerId); });
+window.addEventListener('pointercancel', e => gestures.cancel(e.pointerId));
+// iOS: no pinch-zoom or double-tap zoom under a swipe
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 // Touch grants user activation only on release, so audio starts on pointerup (mouse is still active then).
 window.addEventListener('pointerup', () => { if (!SELFTEST) Sound.unlock(windLevel(game.state)); });
 
@@ -1594,8 +1852,10 @@ function frame(now) {
   if (dt > 0) fps = fps * 0.95 + (1 / dt) * 0.05;
   if (dt > 0.25) dt = 0.25;
   acc += dt;
+  gestures.tick(now / 1000);
   let n = 0;
   while (acc >= STEP && n < 20) { game.update(STEP); acc -= STEP; n++; }
+  Sound.update();
   render(game, fps);
   requestAnimationFrame(frame);
 }
