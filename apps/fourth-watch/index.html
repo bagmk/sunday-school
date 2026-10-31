@@ -53,6 +53,14 @@ const CONFIG = {
   WIDE_GUST_LEAD: 100,
   WALK_EXIT_SUDDEN_P: 0.9,
   WALK_EXIT_TELEGRAPH_S: 0.5,
+  // "Come" opens a way: while He speaks, gusts coming up to Peter's column in the lanes above him slow and
+  // wait at its edge (one already in it blows through, harmlessly). Steps up taken while He speaks start a
+  // run that keeps the way open, his own lane too, as long as each next step up comes within RUN_GAP_S;
+  // from the last lane a step up reaches Him. Stopping or stepping aside closes it.
+  RUN_GAP_S: 0.5,
+  WAY_EDGE_PX: 10,             // the open way: Peter's body width plus this much on each side
+  WAY_SLOW_PX: 70,             // a gust slows down over this distance before the edge of the way
+  WAY_RUSH: 5,                 // speed factor of a gust blowing out of the way
   WALK_FADE_RADIUS: 60,        // gusts this close to Peter's column fade during a Word Walk
   WALK_FADE_ALPHA: 0.15,
   WORD_INTERVAL_RANGE: [8, 12],
@@ -164,7 +172,7 @@ class Game {
     this.resetWorld();
   }
 
-  freshStats() { return { wordsHeard: 0, wordWalks: 0, sinks: 0, maxLane: 0, reached: false }; }
+  freshStats() { return { wordsHeard: 0, wordWalks: 0, sinks: 0, maxLane: 0, reached: false, comeRuns: 0 }; }
   on(fn) { this.listeners.push(fn); }
   emit(type, data) { for (let i = 0; i < this.listeners.length; i++) this.listeners[i](type, data || {}, this); }
 
@@ -188,6 +196,8 @@ class Game {
     this.p = { col: 0, x: CX, y: laneY(0), lane: 0, stillT: 0, cooldownUntil: -1,
                trailA: 0, trailX: CX, trailTop: laneY(0) };
     this.arming = null;
+    this.run = null;               // a run up the open way: { last } = the time of its latest step
+    this.way = null;               // the way open this tick: { x, lane0 }
     this.word = null;
     this.lastWordStart = null;
     this.nextWordAt = CONFIG.WORD_FIRST_AT_S;
@@ -227,6 +237,7 @@ class Game {
     this.state = 'TIMEUP';
     this.timeupT = 0;
     this.arming = null;
+    this.run = null;
     this.tele = [];
     this.emit('timeUp', { text: TEXT.timeUp });
   }
@@ -289,12 +300,52 @@ class Game {
     if (s !== 'PLAYING') return;
     if (code === 'ArrowUp') {
       if (this.word && !this.arming) { this.arming = { t0: this.turnT }; this.emit('arm'); }
+      // While He speaks, or in a run that began then, a step up goes on along the open way, and from the
+      // last lane it reaches Him.
+      if (this.word || this.run) {
+        if (this.p.lane >= LANES) { if (this.t >= this.p.cooldownUntil - 1e-9) this.reach(); return; }
+        if (this.tryStep(0, 1)) this.runStep();
+        return;
+      }
       this.tryStep(0, 1);
     } else {
       this.arming = null;
       if (code === 'ArrowDown') this.tryStep(0, -1);
       else this.tryStep(code === 'ArrowLeft' ? -1 : 1, 0);
+      if (this.run) this.endRun('look');          // he looked at the wind
     }
+  }
+
+  // A step up along the open way; the first one (while He speaks) starts the run.
+  runStep() {
+    if (!this.run) { this.run = { last: this.turnT }; this.stats.comeRuns++; this.emit('run', { lane: this.p.lane }); }
+    this.run.last = this.turnT;
+  }
+  // He stopped, or stepped aside: the way closes and, as when he saw the wind, a sudden gust may come at once.
+  endRun(reason) {
+    if (!this.run) return;
+    this.run = null;
+    const p = this.p;
+    if (p.lane >= 1 && (p.lane >= LANES || this.rng() < CONFIG.WALK_EXIT_SUDDEN_P)) this.addTele(p.lane, p.x, CONFIG.WALK_EXIT_TELEGRAPH_S);
+    this.emit('runEnd', { reason: reason, lane: p.lane });
+  }
+  // The way He opens: while He speaks, the lanes above Peter's column; during a run, his own lane too.
+  openWay() {
+    if (this.state !== 'PLAYING') return null;
+    if (this.run) return { x: this.p.x, lane0: Math.max(1, this.p.lane) };
+    if (this.word) return { x: this.p.x, lane0: this.p.lane + 1 };
+    return null;
+  }
+  // How far a gust moves this tick near the open way: one already in it blows through fast (and cannot
+  // touch him); one still coming slows down and waits at its edge.
+  wayStep(g, d, way) {
+    const hw = CONFIG.HITBOX_W / 2 + CONFIG.WAY_EDGE_PX, c = g.len * CONFIG.GUST_CORE_FRAC;
+    const lo = g.dir > 0 ? g.x - c : g.x, hi = g.dir > 0 ? g.x : g.x + c;
+    if (hi >= way.x - hw && lo <= way.x + hw) { g.rush = true; return d * CONFIG.WAY_RUSH; }
+    g.rush = false;
+    const gap = g.dir > 0 ? way.x - hw - hi : lo - (way.x + hw);
+    if (gap < 0) return d;                                         // already past
+    return Math.max(0, Math.min(d * Math.min(1, gap / CONFIG.WAY_SLOW_PX), gap - 0.5));
   }
 
   setWordInterval(v) {
@@ -321,7 +372,7 @@ class Game {
     p.stillT = 0;
     p.cooldownUntil = this.t + CONFIG.STEP_COOLDOWN_MS / 1000;
     if (lane > this.stats.maxLane) this.stats.maxLane = lane;
-    if (lane >= 1 && (entered || lane === LANES)) this.rollSudden(lane);
+    if (lane >= 1 && (entered || lane === LANES) && !(dy > 0 && (this.word || this.run))) this.rollSudden(lane);   // none along the open way
     this.emit('step', { lane: lane, col: col });
     return true;
   }
@@ -352,6 +403,7 @@ class Game {
   startWalk() {
     const p = this.p;
     this.arming = null;
+    this.run = null;
     this.state = 'WORD_WALK';
     this.stats.wordWalks++;
     this.tele = [];
@@ -378,6 +430,7 @@ class Game {
     this.state = 'REACHED';
     this.reachT = 0;
     this.arming = null;
+    this.run = null;
     this.tele = [];
     this.stats.reached = true;
     this.stats.maxLane = LANES;
@@ -389,6 +442,7 @@ class Game {
     this.state = 'SINKING';
     this.sinkT = 0;
     this.arming = null;
+    this.run = null;
     this.tele = [];
     this.stats.sinks++;
     this.sinkFlags = { cry: false, hand: false, line: false };
@@ -415,7 +469,7 @@ class Game {
     const x0 = p.x - hw, x1 = p.x + hw, y0 = p.y + CONFIG.HITBOX_DY, y1 = y0 + CONFIG.HITBOX_H;
     for (let i = 0; i < this.gusts.length; i++) {
       const g = this.gusts[i];
-      if (g.lane !== p.lane) continue;
+      if (g.lane !== p.lane || g.rush) continue;     // blowing out of the open way, it cannot touch him
       const cy = laneY(g.lane);
       if (y1 < cy - CONFIG.GUST_CORE_HALF_H || y0 > cy + CONFIG.GUST_CORE_HALF_H) continue;
       const c = coreSpan(g);
@@ -432,6 +486,7 @@ class Game {
       this.turnT += dt;
       this.updateWord();
     }
+    this.way = this.openWay();
     this.updateGusts(dt);
     switch (s) {
       case 'PLAYING': this.updatePlaying(dt); break;
@@ -469,11 +524,12 @@ class Game {
 
   updatePlaying(dt) {
     const p = this.p;
-    if (this.turnT >= CONFIG.PLAYER_TIME_S && !this.arming) { this.toTimeUp(); return; }
+    if (this.turnT >= CONFIG.PLAYER_TIME_S && !this.arming && !this.run) { this.toTimeUp(); return; }
     if (this.arming) {
       if (!this.held.ArrowUp) this.arming = null;
       else if (this.turnT - this.arming.t0 >= CONFIG.WORD_HOLD_ARM_S - 1e-6) { this.startWalk(); return; }
     }
+    if (this.run && this.turnT - this.run.last > CONFIG.RUN_GAP_S + 1e-9) this.endRun('stop');   // he stopped
     if (this.arming) return;                       // stepping out: wind cannot touch him yet
     if (p.lane >= 1) {
       p.stillT += dt;
@@ -529,9 +585,13 @@ class Game {
           if (this.laneTimer[n] <= 0) { this.spawnGust(n); this.laneTimer[n] += this.gap(n); }
         }
       }
+      const way = this.way;
       for (let i = 0; i < this.gusts.length; i++) {
         const g = this.gusts[i];
-        g.x += g.dir * this.laneSpeed(g.lane) * this.calmMul * dt;
+        let d = this.laneSpeed(g.lane) * this.calmMul * dt;
+        if (way && g.lane >= way.lane0) d = this.wayStep(g, d, way);
+        else g.rush = false;
+        g.x += g.dir * d;
       }
       let w = 0;
       for (let i = 0; i < this.gusts.length; i++) {
@@ -997,21 +1057,27 @@ function drawTelegraph(tl, t) {
 }
 
 function drawBoat() {
-  ctx.fillStyle = '#0a0a0d';
+  // Dark wood with a little moonlight on it: the boat reads on a projector without brightening the night
+  const hull = ctx.createLinearGradient(0, 648, 0, 697);
+  hull.addColorStop(0, '#36425a'); hull.addColorStop(1, '#171e2b');
+  ctx.fillStyle = hull;
   ctx.beginPath();
   ctx.moveTo(432, 648); ctx.lineTo(848, 648);
   ctx.bezierCurveTo(836, 672, 812, 696, 760, 697);
   ctx.lineTo(520, 697);
   ctx.bezierCurveTo(468, 696, 444, 672, 432, 648);
   ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = 'rgba(130,150,180,.10)'; ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(170,195,230,.30)'; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.strokeStyle = 'rgba(160,185,220,.16)'; ctx.lineWidth = 1;                  // a plank seam
+  ctx.beginPath(); ctx.moveTo(452, 668); ctx.lineTo(828, 668); ctx.stroke();
+  ctx.strokeStyle = 'rgba(210,225,248,.55)'; ctx.lineWidth = 2;                  // the moonlit gunwale
   ctx.beginPath(); ctx.moveTo(434, 648.5); ctx.lineTo(846, 648.5); ctx.stroke();
   // Mast and a stay
-  ctx.fillStyle = '#0c0c10'; ctx.fillRect(700, 565, 3, 83);
-  ctx.strokeStyle = 'rgba(140,150,170,.18)';
+  ctx.fillStyle = '#3c4860'; ctx.fillRect(700, 565, 3, 83);
+  ctx.strokeStyle = 'rgba(175,190,215,.40)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(702, 567); ctx.lineTo(785, 636); ctx.stroke();
   // Five disciples
-  ctx.fillStyle = '#0b0b0e';
+  ctx.fillStyle = '#2b3549';
   for (const x of [480, 520, 560, 750, 790]) {
     ctx.beginPath(); ctx.arc(x, 618, 6, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.moveTo(x - 5, 625); ctx.lineTo(x + 5, 625); ctx.lineTo(x + 7, 648); ctx.lineTo(x - 7, 648); ctx.closePath(); ctx.fill();
@@ -1144,7 +1210,7 @@ function drawTrail(p) {
 function drawPeter(g) {
   const p = g.p, s = g.state;
   if (s === 'SINKING') { drawSinkingPeter(g); return; }
-  const word = s === 'WORD_WALK' || s === 'REACHED';
+  const word = s === 'WORD_WALK' || s === 'REACHED' || !!g.run;   // he glows while he goes on the Word
   drawTrail(p);
   drawHalo(p.x, p.y, word);
   drawPeterBody(p.x, p.y, word, false);
@@ -1393,11 +1459,11 @@ function drawDebug(g, fps) {
   }
   const st = g.stats;
   const lines = [
-    'state ' + g.state + (g.arming ? ' (arming)' : ''),
+    'state ' + g.state + (g.arming ? ' (arming)' : '') + (g.run ? ' (run)' : ''),
     'turn ' + g.turnT.toFixed(1) + 's  next word ' + Math.max(0, g.nextWordAt - g.turnT).toFixed(1) + 's',
     'interval ' + g.wordInterval + 's  difficulty x' + g.diff,
     'still ' + p.stillT.toFixed(2) + 's  lane ' + p.lane + '  col ' + p.col,
-    'heard ' + st.wordsHeard + '  walks ' + st.wordWalks + '  sank ' + st.sinks + '  best ' + st.maxLane + (st.reached ? ' ✓' : ''),
+    'heard ' + st.wordsHeard + '  walks ' + st.wordWalks + '  runs ' + st.comeRuns + '  sank ' + st.sinks + '  best ' + st.maxLane + (st.reached ? ' ✓' : ''),
     'line ' + CONFIG.SINK_LINE + '  mute ' + (g.muted ? 'on' : 'off') + '  fps ' + fps.toFixed(0),
   ];
   ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(W - 330, 44, 324, 14 + lines.length * 16);
@@ -1540,6 +1606,7 @@ async function runSelfTest() {
   const hist = new Array(LANES + 1).fill(0);
   for (let r = 0; r < RUNS; r++) {
     const g = make(1000 + r);
+    g.nextWordAt = Infinity;                       // normal play: no Word
     const bot = { key: null, rng: mulberry32(5000 + r) };
     const ev = [];
     const cnt = { wordOpen: 0, walk: 0, sink: 0 };
@@ -1572,7 +1639,7 @@ async function runSelfTest() {
     }
     if (r % 10 === 9) await yieldUI();
   }
-  check(1, 'Greedy dodging bot never reaches Jesus (' + RUNS + ' runs)', reachedRuns === 0,
+  check(1, 'Greedy dodging bot never reaches Jesus without the Word (' + RUNS + ' runs)', reachedRuns === 0,
         'reached ' + reachedRuns + '/' + RUNS + '; best-lane histogram [0..8] = ' + hist.join(','));
 
   // 1b: a human-like bot (0.3 s reaction, decides every 0.15 s) should usually get to lane 5 or higher
@@ -1580,6 +1647,7 @@ async function runSelfTest() {
   let hReached = 0, hUpper = 0;
   for (let r = 0; r < RUNS; r++) {
     const g = make(9000 + r);
+    g.nextWordAt = Infinity;                       // normal play: no Word
     const bot = { key: null, rng: mulberry32(11000 + r), react: 0.3, every: 9 };
     let guard = 0;
     while (g.state !== 'TURN_END' && guard++ < 60 * 120) { botTick(g, bot); g.update(STEP); }
@@ -1588,7 +1656,7 @@ async function runSelfTest() {
     if (g.stats.maxLane >= 5) hUpper++;
     if (r % 10 === 9) await yieldUI();
   }
-  check('1b', 'Human-like bot regularly reaches lane 5 or higher, never Jesus', hReached === 0 && hUpper / RUNS >= 0.5,
+  check('1b', 'Human-like bot regularly reaches lane 5 or higher, never Jesus without the Word', hReached === 0 && hUpper / RUNS >= 0.5,
         (100 * hUpper / RUNS).toFixed(0) + '% of turns reached lane ≥ 5; reached ' + hReached + '; histogram [0..8] = ' + hh.join(','));
 
   // 2: press-and-hold up at a Word window from the boat
@@ -1696,7 +1764,7 @@ async function runSelfTest() {
   for (let r = 0; r < 40; r++) {
     const g = make(6000 + r), rr = mulberry32(6500 + r);
     const bot = { key: null, rng: mulberry32(6800 + r) };
-    const cnt = { wordOpen: 0, walk: 0, sink: 0, reached: 0 };
+    const cnt = { wordOpen: 0, walk: 0, sink: 0, reached: 0, run: 0 };
     let maxSeen = 0;
     g.on((type, d) => {
       if (cnt[type] !== undefined) cnt[type]++;
@@ -1707,12 +1775,14 @@ async function runSelfTest() {
     g.keyDown('ArrowUp', false);
     until(g, x => x.state === 'REACHED', r % 2 ? 6 : 0.6 + 3.5 * rr());
     g.keyUp('ArrowUp');
+    g.nextWordAt = Infinity;                       // the bot plays on without the Word (and the open one ends)
+    if (g.word) g.word.end = g.turnT;
     let guard = 0;
     while (g.state !== 'TURN_END' && guard++ < 60 * 120) { botTick(g, bot); g.update(STEP); }
     const st = g.stats;
     if (cnt.walk > 0) walked7++;
     if (cnt.reached > 0) reached7++;
-    if (st.wordsHeard !== cnt.wordOpen || st.wordWalks !== cnt.walk || st.sinks !== cnt.sink ||
+    if (st.wordsHeard !== cnt.wordOpen || st.wordWalks !== cnt.walk || st.sinks !== cnt.sink || st.comeRuns !== cnt.run ||
         st.maxLane !== maxSeen || st.reached !== (cnt.reached > 0)) stats7OK = false;
   }
   const ok7 = statsOK && stats7OK && walked7 === 40 && reached7 === 20;
@@ -1823,6 +1893,7 @@ async function runSelfTest() {
     // h: tapping on through 0:00 neither cuts "Time's up" short nor starts the next player at once
     const tu = make(10300 + r), TU = touch(tu);
     calm(tu);
+    tu.nextWordAt = Infinity;                      // no Word here: this is about the turn end
     tu.turnT = CONFIG.PLAYER_TIME_S - 0.3 - 0.1 * mulberry32(10350 + r)();
     let tUp = -1, tEnd = -1, tNext = -1, tid = 1;
     for (let i = 0; i < 900 && tNext < 0; i++) {     // a tap every 0.15 s, each with a new finger id
@@ -1871,6 +1942,81 @@ async function runSelfTest() {
         ', from a swipe or finger held before the window ' + d9 + ', look ends walk ' + e9 + '/' + n9 +
         ', title tap ' + f9 + '/' + n9 + ', one swipe one step ' + g9 + '/' + n9 + ', time-up kept ' + h9 + '/' + n9 +
         ', second finger ' + i9 + '/' + n9);
+
+  // 10: "Come" opens the way: steps up one after another while He speaks reach Jesus through the moving
+  //     wind; stopping or stepping aside closes it, and the same run without the Word never gets through
+  const upTap = g => { g.keyDown('ArrowUp', false); g.keyUp('ArrowUp'); };
+  const tapEvery = (g, gap, secs, first) => {
+    let next = g.turnT + (first || 0);
+    for (let i = 0, n = Math.round(secs / STEP); i < n && g.state === 'PLAYING'; i++) {
+      if (g.turnT >= next - 1e-9) { upTap(g); next += gap; }
+      g.update(STEP);
+    }
+  };
+  let a10 = 0, b10 = 0, c10 = 0, cs10 = 0, d10 = 0, e10 = 0, f10 = 0;
+  for (let r = 0; r < 200; r++) {
+    const rr = mulberry32(12500 + r);
+    // a: from the boat, starting at any moment while He speaks, one step every 0.15–0.45 s
+    const g = make(12000 + r);
+    until(g, x => !!x.word, 20);
+    const ws = g.word.start;
+    until(g, x => x.turnT >= ws + rr() * (CONFIG.WORD_DURATION_S - 0.15), 3);
+    tapEvery(g, 0.15 + 0.3 * rr(), 8);
+    if (g.state === 'REACHED' && g.stats.comeRuns === 1 && g.stats.wordWalks === 0) a10++;
+    // b: from anywhere on the sea: Peter in a random lane and column as He begins to speak
+    const h = make(12200 + r);
+    until(h, x => !!x.word, 20);
+    const lane = 1 + Math.floor(rr() * LANES), col = Math.round((rr() * 2 - 1) * MAX_COL);
+    Object.assign(h.p, { lane: lane, col: col, x: colX(col), y: laneY(lane), stillT: 0 });
+    h.gusts = h.gusts.filter(q => q.lane !== lane || Math.abs(q.x - h.p.x) > 300);
+    h.tele = [];
+    tapEvery(h, 0.25, 8, 0.05);
+    if (h.state === 'REACHED') b10++;
+    // c: stopping halfway (in lane 4) closes the way: he does not reach Jesus (and the wind usually comes)
+    const k = make(12400 + r);
+    let stopped = false;
+    k.on((type, d) => { if (type === 'runEnd' && d.reason === 'stop') stopped = true; });
+    until(k, x => !!x.word, 20);
+    for (let s = 0; s < 4; s++) { upTap(k); run(k, 0.25); }
+    run(k, 1.6);
+    if (stopped && !k.stats.reached) c10++;
+    if (k.stats.sinks > 0) cs10++;
+    // d: stepping aside mid-run ends it at once ("he saw the wind")
+    const q = make(12600 + r);
+    let looked = false;
+    q.on((type, d) => { if (type === 'runEnd' && d.reason === 'look') looked = true; });
+    until(q, x => !!x.word, 20);
+    for (let s = 0; s < 3; s++) { upTap(q); run(q, 0.25); }
+    q.keyDown('ArrowLeft', false); q.keyUp('ArrowLeft');
+    if (looked && !q.run) d10++;
+    // e: the same run without the Word never gets through (the last lane is guarded)
+    const o = make(12800 + r);
+    o.nextWordAt = Infinity;
+    for (let i = 0; i < 60 * 14 && o.state !== 'REACHED' && o.state !== 'TURN_END'; i++) {
+      if (o.state === 'PLAYING' && i % 15 === 0) upTap(o);
+      o.update(STEP);
+    }
+    if (!o.stats.reached) e10++;
+    // f: while He speaks no gust crosses Peter's column in the lanes above him (the way is open)
+    const w = make(13000 + r);
+    until(w, x => !!x.word, 20);
+    let crossed = false;
+    const hw = CONFIG.HITBOX_W / 2;
+    for (let i = 0; i < 60 * 3 && w.word; i++) {
+      w.update(STEP);
+      for (const gs of w.gusts) {
+        if (gs.lane <= w.p.lane || gs.rush) continue;
+        const c = coreSpan(gs);
+        if (c[1] >= w.p.x - hw && c[0] <= w.p.x + hw) crossed = true;
+      }
+    }
+    if (!crossed) f10++;
+    if (r % 20 === 19) await yieldUI();
+  }
+  check(10, '"Come" opens the way: steps up one after another while He speaks reach Jesus; stopping, stepping aside or running without the Word does not',
+        a10 === 200 && b10 === 200 && c10 === 200 && d10 === 200 && e10 === 200 && f10 === 200,
+        'from the boat ' + a10 + '/200, from anywhere on the sea ' + b10 + '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 +
+        '), stepping aside ends it ' + d10 + '/200, never through without the Word ' + e10 + '/200, way open while He speaks ' + f10 + '/200');
 
   const pass = results.every(x => x.pass);
   log(pass ? 'ALL PASS' : 'SOME CHECKS FAILED', '(' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)');
