@@ -27,7 +27,7 @@ A small "app store" of Bible games for a youth Sunday-school class, played toget
 | --- | --- |
 | `Enter` | 시작 · 계속 |
 | `N` | 다음 사람으로 넘기기 |
-| `D` | 리허설용 디버그 화면 켜기/끄기 (학생들 앞에서는 끄세요) |
+| `D` | 리허설용 디버그 화면 켜기/끄기 (다음 사람으로 넘어가거나 `Esc`로 첫 화면에 가면 자동으로 꺼져요) |
 | `M` | 소리 끄기/켜기 |
 | `Esc` | 첫 화면 |
 | `+` / `-` | 말씀 간격 ±1초 (8–12초) |
