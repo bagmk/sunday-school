@@ -4,7 +4,7 @@
 
 A bilingual (Korean/English) story game on Matthew 9:1–8. A youth class plays all three characters together on one TV.
 
-- **플레이:** https://bagmk.github.io/before-he-stood/
+- **플레이:** https://bagmk.github.io/sunday-school/apps/before-he-stood/ (앱 목록: https://bagmk.github.io/sunday-school/)
 - **오프라인:** 폴더의 `index.html`을 더블클릭하면 인터넷 없이 실행돼요. 파일 하나로 공유하려면 `dist/before-he-stood.html`을 보내면 돼요.
 
 ## 어떤 게임인가요
