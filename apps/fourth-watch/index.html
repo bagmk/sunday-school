@@ -53,14 +53,16 @@ const CONFIG = {
   WIDE_GUST_LEAD: 100,
   WALK_EXIT_SUDDEN_P: 0.9,
   WALK_EXIT_TELEGRAPH_S: 0.5,
-  // "Come" opens a way: while He speaks, gusts coming up to Peter's column in the lanes above him slow and
-  // wait at its edge (one already in it blows through, harmlessly). Steps up taken while He speaks start a
-  // run that keeps the way open, his own lane too, as long as each next step up comes within RUN_GAP_S;
-  // from the last lane a step up reaches Him. Stopping or stepping aside closes it.
+  // "Come": the wind flows on as always (same way, same speed), but its gusts are timed so that while He
+  // speaks the way straight up the middle, toward Him, comes clear. Steps up taken there while He speaks
+  // start a run: no sudden gusts form on the way, the run goes on as long as each next step up comes
+  // within RUN_GAP_S, and from the last lane a step up reaches Him. Stopping or stepping aside ends it
+  // (and, as when he saw the wind, a sudden gust may come).
   RUN_GAP_S: 0.5,
-  WAY_EDGE_PX: 10,             // the open way: Peter's body width plus this much on each side
-  WAY_SLOW_PX: 70,             // a gust slows down over this distance before the edge of the way
-  WAY_RUSH: 5,                 // speed factor of a gust blowing out of the way
+  WAY_START_S: 1.5,            // the way is clear for a run that starts up to this long after He begins,
+  WAY_PACE_S: 0.3,             // going up one lane every WAY_PACE_S (or faster),
+  WAY_PRE_S: 0.25,             // and from a little before He speaks
+  WAY_EDGE_PX: 10,             // the way: Peter's body width plus this much on each side
   WALK_FADE_RADIUS: 60,        // gusts this close to Peter's column fade during a Word Walk
   WALK_FADE_ALPHA: 0.15,
   WORD_INTERVAL_RANGE: [8, 12],
@@ -196,8 +198,7 @@ class Game {
     this.p = { col: 0, x: CX, y: laneY(0), lane: 0, stillT: 0, cooldownUntil: -1,
                trailA: 0, trailX: CX, trailTop: laneY(0) };
     this.arming = null;
-    this.run = null;               // a run up the open way: { last } = the time of its latest step
-    this.way = null;               // the way open this tick: { x, lane0 }
+    this.run = null;               // a run up the middle way: { last } = the time of its latest step
     this.word = null;
     this.lastWordStart = null;
     this.nextWordAt = CONFIG.WORD_FIRST_AT_S;
@@ -205,6 +206,12 @@ class Game {
     this.sinkT = 0; this.respawnT = 0; this.reachT = 0; this.timeupT = 0;
     this.sinkLine = null; this.sinkFlags = null; this.sinkPos = null; this.reachFrom = null;
     this.vis = { wordGlow: 0, bubbleA: 0 };
+    // The gust clock (it stops while the wind does) and the ways planned on it: the first comes as He first
+    // speaks and the next an interval later, both planned now so the wind is timed for them from the start.
+    this.gt = 0;
+    this.ways = [];
+    this.planWay(CONFIG.PREWARM_S + CONFIG.WORD_FIRST_AT_S);
+    this.planWay(CONFIG.PREWARM_S + CONFIG.WORD_FIRST_AT_S + this.wordInterval);
     this.warm = true;
     const steps = Math.round(CONFIG.PREWARM_S * 30);
     for (let i = 0; i < steps; i++) this.updateGusts(1 / 30);
@@ -300,9 +307,9 @@ class Game {
     if (s !== 'PLAYING') return;
     if (code === 'ArrowUp') {
       if (this.word && !this.arming) { this.arming = { t0: this.turnT }; this.emit('arm'); }
-      // While He speaks, or in a run that began then, a step up goes on along the open way, and from the
-      // last lane it reaches Him.
-      if (this.word || this.run) {
+      // On the middle way, while He speaks or in a run that began then, a step up goes on toward Him, and
+      // from the last lane it reaches Him.
+      if ((this.word || this.run) && this.p.col === 0) {
         if (this.p.lane >= LANES) { if (this.t >= this.p.cooldownUntil - 1e-9) this.reach(); return; }
         if (this.tryStep(0, 1)) this.runStep();
         return;
@@ -329,30 +336,42 @@ class Game {
     if (p.lane >= 1 && (p.lane >= LANES || this.rng() < CONFIG.WALK_EXIT_SUDDEN_P)) this.addTele(p.lane, p.x, CONFIG.WALK_EXIT_TELEGRAPH_S);
     this.emit('runEnd', { reason: reason, lane: p.lane });
   }
-  // The way He opens: while He speaks, the lanes above Peter's column; during a run, his own lane too.
-  openWay() {
-    if (this.state !== 'PLAYING') return null;
-    if (this.run) return { x: this.p.x, lane0: Math.max(1, this.p.lane) };
-    if (this.word) return { x: this.p.x, lane0: this.p.lane + 1 };
-    return null;
+  // A way up the middle, clear of gust cores in each lane n from a little before He speaks (at, on the gust
+  // clock) until a run starting up to WAY_START_S later, a lane every WAY_PACE_S, has gone through it.
+  planWay(at) {
+    const A = [], B = [];
+    for (let n = 1; n <= LANES; n++) { A[n] = at - CONFIG.WAY_PRE_S; B[n] = at + CONFIG.WAY_START_S + n * CONFIG.WAY_PACE_S; }
+    this.ways.push({ at: at, A: A, B: B, done: false });
   }
-  // How far a gust moves this tick near the open way: one already in it blows through fast (and cannot
-  // touch him); one still coming slows down and waits at its edge.
-  wayStep(g, d, way) {
-    const hw = CONFIG.HITBOX_W / 2 + CONFIG.WAY_EDGE_PX, c = g.len * CONFIG.GUST_CORE_FRAC;
-    const lo = g.dir > 0 ? g.x - c : g.x, hi = g.dir > 0 ? g.x : g.x + c;
-    if (hi >= way.x - hw && lo <= way.x + hw) { g.rush = true; return d * CONFIG.WAY_RUSH; }
-    g.rush = false;
-    const gap = g.dir > 0 ? way.x - hw - hi : lo - (way.x + hw);
-    if (gap < 0) return d;                                         // already past
-    return Math.max(0, Math.min(d * Math.min(1, gap / CONFIG.WAY_SLOW_PX), gap - 0.5));
+  // How long to hold back lane n's next gust so that its core does not cross the middle way while that must
+  // be clear (0: it can come now). Only the moment a gust enters, off screen, is chosen; once it is on its
+  // way it blows like every other gust.
+  holdSpawn(n) {
+    const v = this.laneSpeed(n) * this.calmMul, dir = laneDir(n);
+    if (!this.ways.length || v <= 0) return 0;
+    const hw = CONFIG.HITBOX_W / 2 + CONFIG.WAY_EDGE_PX;
+    const c = CONFIG.GUST_LEN[n - 1] * (1 + CONFIG.GUST_LEN_JITTER) * CONFIG.GUST_CORE_FRAC;   // the longest core
+    const xs = dir > 0 ? -CONFIG.SPAWN_MARGIN : CONFIG.W + CONFIG.SPAWN_MARGIN;
+    const d0 = (dir > 0 ? CX - hw - xs : xs - (CX + hw)) / v;          // until its core reaches the way
+    const d1 = (dir > 0 ? CX + hw + c - xs : xs + c - (CX - hw)) / v;  // until its core has left it
+    let wait = 0;
+    for (const w of this.ways) {
+      const s = this.gt + wait;
+      if (s + d1 > w.A[n] && s + d0 < w.B[n]) wait = w.B[n] - d0 - this.gt;
+    }
+    return wait > 1e-9 ? wait : 0;
   }
 
   setWordInterval(v) {
     v = clamp(v, CONFIG.WORD_INTERVAL_RANGE[0], CONFIG.WORD_INTERVAL_RANGE[1]);
     this.wordInterval = v;
-    // Also during an open window: the next one moves at once (the 8 s minimum exceeds the window length).
-    if (this.lastWordStart !== null) this.nextWordAt = Math.max(this.turnT, this.lastWordStart + v);
+    // The next way is already timed into the wind; the one after it moves to the new interval.
+    const up = this.ways.filter(x => !x.done);
+    if (up.length >= 2) {
+      const last = up[up.length - 1], at = up[up.length - 2].at + v;
+      this.ways.splice(this.ways.indexOf(last), 1);
+      this.planWay(at);
+    }
     this.toast('Word interval ' + v + ' s');
   }
   toast(msg) { this.toastMsg = msg; this.toastT = this.t; }
@@ -372,7 +391,7 @@ class Game {
     p.stillT = 0;
     p.cooldownUntil = this.t + CONFIG.STEP_COOLDOWN_MS / 1000;
     if (lane > this.stats.maxLane) this.stats.maxLane = lane;
-    if (lane >= 1 && (entered || lane === LANES) && !(dy > 0 && (this.word || this.run))) this.rollSudden(lane);   // none along the open way
+    if (lane >= 1 && (entered || lane === LANES) && !(dy > 0 && col === 0 && (this.word || this.run))) this.rollSudden(lane);   // none on the way
     this.emit('step', { lane: lane, col: col });
     return true;
   }
@@ -469,7 +488,7 @@ class Game {
     const x0 = p.x - hw, x1 = p.x + hw, y0 = p.y + CONFIG.HITBOX_DY, y1 = y0 + CONFIG.HITBOX_H;
     for (let i = 0; i < this.gusts.length; i++) {
       const g = this.gusts[i];
-      if (g.lane !== p.lane || g.rush) continue;     // blowing out of the open way, it cannot touch him
+      if (g.lane !== p.lane) continue;
       const cy = laneY(g.lane);
       if (y1 < cy - CONFIG.GUST_CORE_HALF_H || y0 > cy + CONFIG.GUST_CORE_HALF_H) continue;
       const c = coreSpan(g);
@@ -486,7 +505,6 @@ class Game {
       this.turnT += dt;
       this.updateWord();
     }
-    this.way = this.openWay();
     this.updateGusts(dt);
     switch (s) {
       case 'PLAYING': this.updatePlaying(dt); break;
@@ -511,15 +529,20 @@ class Game {
 
   updateWord() {
     if (this.word && this.turnT >= this.word.end) { this.word = null; this.emit('wordClose'); }
+    // He speaks when the next planned way comes clear, if Peter is out on the sea (or walking); while he is
+    // sinking that one is missed. Each way that comes plans the next one an interval after the last.
+    const w = this.ways.find(x => !x.done);
+    if (!w || this.gt < w.at || !isFinite(this.nextWordAt)) return;
+    w.done = true;
+    this.planWay(this.ways[this.ways.length - 1].at + this.wordInterval);
     const s = this.state;
-    if (!this.word && this.turnT >= this.nextWordAt && (s === 'PLAYING' || s === 'WORD_WALK') &&
-        this.turnT < CONFIG.PLAYER_TIME_S) {
+    if (!this.word && (s === 'PLAYING' || s === 'WORD_WALK') && this.turnT < CONFIG.PLAYER_TIME_S) {
       this.word = { start: this.turnT, end: this.turnT + CONFIG.WORD_DURATION_S };
       this.lastWordStart = this.turnT;
-      this.nextWordAt = this.turnT + this.wordInterval;
       this.stats.wordsHeard++;
       this.emit('wordOpen');
     }
+    this.nextWordAt = this.turnT + this.ways.find(x => !x.done).at - this.gt;   // when He speaks next (for the debug view)
   }
 
   updatePlaying(dt) {
@@ -579,20 +602,21 @@ class Game {
     const s = this.state, p = this.p;
     const paused = this.t < this.calmUntil;
     if (!paused) {
+      this.gt += dt;
       if (this.spawnEnabled) {
         for (let n = 1; n <= LANES; n++) {
           this.laneTimer[n] -= dt;
-          if (this.laneTimer[n] <= 0) { this.spawnGust(n); this.laneTimer[n] += this.gap(n); }
+          if (this.laneTimer[n] > 0) continue;
+          const wait = this.holdSpawn(n);
+          if (wait > 0) this.laneTimer[n] = wait;        // it would cross the middle way while that must be clear
+          else { this.spawnGust(n); this.laneTimer[n] += this.gap(n); }
         }
       }
-      const way = this.way;
       for (let i = 0; i < this.gusts.length; i++) {
         const g = this.gusts[i];
-        let d = this.laneSpeed(g.lane) * this.calmMul * dt;
-        if (way && g.lane >= way.lane0) d = this.wayStep(g, d, way);
-        else g.rush = false;
-        g.x += g.dir * d;
+        g.x += g.dir * this.laneSpeed(g.lane) * this.calmMul * dt;
       }
+      while (this.ways.length && this.ways[0].done && this.gt > this.ways[0].B[LANES] + 1) this.ways.shift();
       let w = 0;
       for (let i = 0; i < this.gusts.length; i++) {
         const g = this.gusts[i];
@@ -1943,8 +1967,9 @@ async function runSelfTest() {
         ', title tap ' + f9 + '/' + n9 + ', one swipe one step ' + g9 + '/' + n9 + ', time-up kept ' + h9 + '/' + n9 +
         ', second finger ' + i9 + '/' + n9);
 
-  // 10: "Come" opens the way: steps up one after another while He speaks reach Jesus through the moving
-  //     wind; stopping or stepping aside closes it, and the same run without the Word never gets through
+  // 10: "Come": the wind flows on as always, but while He speaks the way straight up the middle comes clear;
+  //     steps up there one after another reach Jesus. Stopping, stepping aside, going up off the middle or
+  //     running without the Word does not.
   const upTap = g => { g.keyDown('ArrowUp', false); g.keyUp('ArrowUp'); };
   const tapEvery = (g, gap, secs, first) => {
     let next = g.turnT + (first || 0);
@@ -1953,26 +1978,24 @@ async function runSelfTest() {
       g.update(STEP);
     }
   };
-  let a10 = 0, b10 = 0, c10 = 0, cs10 = 0, d10 = 0, e10 = 0, f10 = 0;
+  let a10 = 0, b10 = 0, c10 = 0, cs10 = 0, d10 = 0, e10 = 0, f10 = 0, g10 = 0, h10 = 0;
   for (let r = 0; r < 200; r++) {
     const rr = mulberry32(12500 + r);
-    // a: from the boat, starting at any moment while He speaks, one step every 0.15–0.45 s
+    // a: from the bow, starting at any moment up to WAY_START_S after He begins, one step every 0.15 s to WAY_PACE_S
     const g = make(12000 + r);
     until(g, x => !!x.word, 20);
     const ws = g.word.start;
-    until(g, x => x.turnT >= ws + rr() * (CONFIG.WORD_DURATION_S - 0.15), 3);
-    tapEvery(g, 0.15 + 0.3 * rr(), 8);
+    until(g, x => x.turnT >= ws + rr() * CONFIG.WAY_START_S, 3);
+    tapEvery(g, 0.15 + (CONFIG.WAY_PACE_S - 0.15) * rr(), 8);
     if (g.state === 'REACHED' && g.stats.comeRuns === 1 && g.stats.wordWalks === 0) a10++;
-    // b: from anywhere on the sea: Peter in a random lane and column as He begins to speak
+    // b: from anywhere on the middle way: Peter in a random lane of the middle column as He begins to speak
     const h = make(12200 + r);
     until(h, x => !!x.word, 20);
-    const lane = 1 + Math.floor(rr() * LANES), col = Math.round((rr() * 2 - 1) * MAX_COL);
-    Object.assign(h.p, { lane: lane, col: col, x: colX(col), y: laneY(lane), stillT: 0 });
-    h.gusts = h.gusts.filter(q => q.lane !== lane || Math.abs(q.x - h.p.x) > 300);
-    h.tele = [];
-    tapEvery(h, 0.25, 8, 0.05);
+    const lane = 1 + Math.floor(rr() * LANES);
+    Object.assign(h.p, { lane: lane, col: 0, x: CX, y: laneY(lane), stillT: 0 });
+    tapEvery(h, CONFIG.WAY_PACE_S, 8, 0.05);
     if (h.state === 'REACHED') b10++;
-    // c: stopping halfway (in lane 4) closes the way: he does not reach Jesus (and the wind usually comes)
+    // c: stopping halfway (in lane 4) ends the run: he does not reach Jesus (and the wind usually comes)
     const k = make(12400 + r);
     let stopped = false;
     k.on((type, d) => { if (type === 'runEnd' && d.reason === 'stop') stopped = true; });
@@ -1997,26 +2020,55 @@ async function runSelfTest() {
       o.update(STEP);
     }
     if (!o.stats.reached) e10++;
-    // f: while He speaks no gust crosses Peter's column in the lanes above him (the way is open)
+    // f: going up beside the middle way while He speaks is no run: ordinary steps, and he never gets through
+    const f = make(13200 + r);
+    const side = (r % 2 ? 1 : -1) * CONFIG.BOAT_MAX_COL;
+    Object.assign(f.p, { col: side, x: colX(side) });
+    until(f, x => !!x.word, 20);
+    for (let i = 0; i < 60 * 10 && f.state !== 'REACHED' && f.state !== 'TURN_END'; i++) {
+      if (f.state === 'PLAYING' && i % 15 === 0) upTap(f);
+      f.update(STEP);
+    }
+    if (f.stats.comeRuns === 0 && !f.stats.reached) f10++;
+    // g: the wind flows as always: every gust moves exactly its lane's speed each tick (none slows, stops or
+    //    jumps), except while the wind has ceased after a respawn
     const w = make(13000 + r);
-    until(w, x => !!x.word, 20);
-    let crossed = false;
-    const hw = CONFIG.HITBOX_W / 2;
-    for (let i = 0; i < 60 * 3 && w.word; i++) {
+    let natural = true, seen = 0;
+    let prev = new Map(w.gusts.map(x => [x, x.x]));
+    for (let i = 0; i < 60 * 14; i++) {
+      if (w.word && w.state === 'PLAYING' && i % 15 === 0) upTap(w);
+      const still = w.t + STEP < w.calmUntil, cm = w.calmMul;
       w.update(STEP);
-      for (const gs of w.gusts) {
-        if (gs.lane <= w.p.lane || gs.rush) continue;
-        const c = coreSpan(gs);
-        if (c[1] >= w.p.x - hw && c[0] <= w.p.x + hw) crossed = true;
+      for (const x of w.gusts) {
+        if (!prev.has(x)) continue;
+        const dx = x.x - prev.get(x), want = still ? 0 : x.dir * w.laneSpeed(x.lane) * cm * STEP;
+        seen++;
+        if (Math.abs(dx - want) > 1e-6) natural = false;
+      }
+      prev = new Map(w.gusts.map(x => [x, x.x]));
+    }
+    if (natural && seen > 0) g10++;
+    // h: while He speaks, no gust crosses the middle way in a lane until a steady run would have left it
+    const m = make(13400 + r);
+    until(m, x => !!x.word, 20);
+    const st = m.word.start, hw = CONFIG.HITBOX_W / 2;
+    let crossed = false;
+    for (let i = 0; i < 60 * 6; i++) {
+      m.update(STEP);
+      for (const x of m.gusts) {
+        if (m.turnT - st > CONFIG.WAY_START_S + x.lane * CONFIG.WAY_PACE_S) continue;
+        const c = coreSpan(x);
+        if (c[1] >= CX - hw && c[0] <= CX + hw) crossed = true;
       }
     }
-    if (!crossed) f10++;
+    if (!crossed) h10++;
     if (r % 20 === 19) await yieldUI();
   }
-  check(10, '"Come" opens the way: steps up one after another while He speaks reach Jesus; stopping, stepping aside or running without the Word does not',
-        a10 === 200 && b10 === 200 && c10 === 200 && d10 === 200 && e10 === 200 && f10 === 200,
-        'from the boat ' + a10 + '/200, from anywhere on the sea ' + b10 + '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 +
-        '), stepping aside ends it ' + d10 + '/200, never through without the Word ' + e10 + '/200, way open while He speaks ' + f10 + '/200');
+  check(10, '"Come": the wind flows as always, yet while He speaks the middle way comes clear; a run up it reaches Jesus, nothing else does',
+        a10 === 200 && b10 === 200 && c10 === 200 && d10 === 200 && e10 === 200 && f10 === 200 && g10 === 200 && h10 === 200,
+        'run from the bow ' + a10 + '/200, from anywhere on the middle way ' + b10 + '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 +
+        '), stepping aside ends it ' + d10 + '/200, never through without the Word ' + e10 + '/200, off the middle ' + f10 +
+        '/200, wind flows as always ' + g10 + '/200, middle way clear while He speaks ' + h10 + '/200');
 
   const pass = results.every(x => x.pass);
   log(pass ? 'ALL PASS' : 'SOME CHECKS FAILED', '(' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)');
