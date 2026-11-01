@@ -57,8 +57,8 @@ const CONFIG = {
   WALK_EXIT_TELEGRAPH_S: 0.5,
   // "Come": steps up taken while He speaks start a run. As long as he keeps pressing on (a step up, ↑ let go
   // or a finger coming down, each within RUN_GAP_S of the last; also after the bubble fades) the waves cannot
-  // touch him (they fade as he passes over them), and from the last lane a step up reaches Him. Stopping or
-  // stepping aside ends it.
+  // touch him, and from the last lane a step up reaches Him. From the second step up it shows (he glows gold,
+  // the waves fade as he passes over them); a single step stays quiet. Stopping or stepping aside ends it.
   RUN_GAP_S: 0.75,
   WALK_FADE_RADIUS: 60,        // gusts this close to Peter's column fade during a Word Walk or a run
   WALK_FADE_ALPHA: 0.15,
@@ -197,7 +197,7 @@ class Game {
     this.p = { col: 0, x: CX, y: laneY(0), lane: 0, stillT: 0, cooldownUntil: -1,
                trailA: 0, trailX: CX, trailTop: laneY(0) };
     this.arming = null;
-    this.run = null;               // a run on the Word: { last } = the time of its latest step
+    this.run = null;               // a run on the Word: { last, steps, shown } (last: its latest step)
     this.passOver = null;          // gusts he was over when a run or walk ended: they go on past him
     this.word = null;
     this.lastWordStart = null;
@@ -306,7 +306,10 @@ class Game {
       if (this.word && !this.arming) { this.arming = { t0: this.turnT }; this.emit('arm'); }
       // From the last lane a step up reaches Him. While He speaks, or in a run that began then, steps up are
       // a run: the waves cannot touch him.
-      if (this.p.lane >= LANES) { if (this.t >= this.p.cooldownUntil - 1e-9) this.reach(); return; }
+      if (this.p.lane >= LANES) {
+        if (this.t >= this.p.cooldownUntil - 1e-9) { if (this.run) this.runStep(); this.reach(); }   // (a move of the run)
+        return;
+      }
       if (this.tryStep(0, 1) && (this.word || this.run)) this.runStep();
     } else {
       this.arming = null;
@@ -318,19 +321,34 @@ class Game {
     }
   }
 
-  // A step up on the Word; the first one (while He speaks) starts the run. A walk keeps it going, and letting go
-  // of a walk that began from a resting finger starts one.
+  // A step up on the Word; the first one (while He speaks) starts the run, quietly: it shows only from the second
+  // step up (or a walk), so a single step at "Come" never makes him glow by chance. A walk keeps the run going,
+  // and letting go of a walk that began from a resting finger starts one.
   runStep() {
-    if (!this.run) { this.run = { last: this.turnT }; this.tele = []; this.stats.comeRuns++; this.emit('run', { lane: this.p.lane }); }
+    if (!this.run) { this.run = { last: this.turnT, steps: 0, shown: false }; this.tele = []; }
     this.run.last = this.turnT;
+    if (++this.run.steps >= 2) this.showRun();
+  }
+  // The run shows: he glows gold, the waves around him fade, and it is counted.
+  showRun() {
+    if (!this.run || this.run.shown) return;
+    this.run.shown = true;
+    this.stats.comeRuns++;
+    this.emit('run', { lane: this.p.lane });
+  }
+  // Peter glows gold while he goes on the Word: walking, in a run that shows, or with Him.
+  glowing() {
+    const s = this.state;
+    return s === 'WORD_WALK' || s === 'REACHED' || (s === 'PLAYING' && !!this.run && this.run.shown);
   }
   // He stopped, or stepped aside: the run ends and the waves can reach him again.
   endRun(reason) {
     if (!this.run) return;
+    const shown = this.run.shown;
     this.run = null;
     this.p.stillT = 0;
     this.markPassOver();
-    this.emit('runEnd', { reason: reason, lane: this.p.lane });
+    if (shown) this.emit('runEnd', { reason: reason, lane: this.p.lane });   // a run never shown ends quietly
   }
   // The waves he is over as he stops (faded, as he was passing over them) go on past him: none of them can
   // sink him while he stays where he is. Only waves still to come, seen coming, can.
@@ -397,6 +415,7 @@ class Game {
     this.walkFrom = p.lane;                                   // where the walk began
     this.walkRest = !!(this.arming && this.arming.rest);      // from a resting finger: no step taken yet
     this.arming = null;                                       // (a run going on goes on through the walk)
+    if (this.run) this.showRun();                             // and shows: he glows as he walks
     this.state = 'WORD_WALK';
     this.stats.wordWalks++;
     this.tele = [];
@@ -429,6 +448,7 @@ class Game {
       // step up within RUN_GAP_S (at once, with no cooldown) keeps the waves off him.
       p.cooldownUntil = this.t;
       if (this.run) this.run.last = this.turnT; else this.runStep();
+      this.showRun();                                         // he walked: the run shows
     } else {
       // Looking aside (← → ↓) ends the walk and the run. (A gust forms where he looked aside only if
       // WALK_EXIT_SUDDEN_P is raised; it is 0.)
@@ -618,7 +638,7 @@ class Game {
     }
     if (this.warm) return;
     const near = CONFIG.WHOOSH_DIST * CONFIG.WHOOSH_DIST;
-    const walking = s === 'WORD_WALK' || (s === 'PLAYING' && !!this.run);   // he passes over the waves
+    const walking = s === 'WORD_WALK' || (s === 'PLAYING' && !!this.run && this.run.shown);   // he passes over the waves
     const r = CONFIG.WALK_FADE_RADIUS;
     const ka = Math.min(1, dt * 8);
     for (let i = 0; i < this.gusts.length; i++) {
@@ -1226,7 +1246,7 @@ function drawTrail(p) {
 function drawPeter(g) {
   const p = g.p, s = g.state;
   if (s === 'SINKING') { drawSinkingPeter(g); return; }
-  const word = s === 'WORD_WALK' || s === 'REACHED' || !!g.run;   // he glows while he goes on the Word
+  const word = g.glowing();       // he glows while he goes on the Word (a run from its second step up)
   drawTrail(p);
   drawHalo(p.x, p.y, word);
   drawPeterBody(p.x, p.y, word, false);
@@ -1475,7 +1495,7 @@ function drawDebug(g, fps) {
   }
   const st = g.stats;
   const lines = [
-    'state ' + g.state + (g.arming ? ' (arming)' : '') + (g.run ? ' (run)' : ''),
+    'state ' + g.state + (g.arming ? ' (arming)' : '') + (g.run ? (g.run.shown ? ' (run)' : ' (run, quiet)') : ''),
     'turn ' + g.turnT.toFixed(1) + 's  next word ' + Math.max(0, g.nextWordAt - g.turnT).toFixed(1) + 's',
     'interval ' + g.wordInterval + 's  difficulty x' + g.diff,
     'still ' + p.stillT.toFixed(2) + 's  lane ' + p.lane + '  col ' + p.col,
@@ -2164,7 +2184,7 @@ async function runSelfTest() {
     return false;
   };
   let a10 = 0, k10 = 0, b10 = 0, c10 = 0, cs10 = 0, c810 = 0, d10 = 0, e10 = 0, ej10 = 0, e210 = 0, es210 = 0, h10 = 0,
-      f10 = 0, l10 = 0, m10 = 0, ms10 = 0, n10 = 0, o10 = 0, d210 = 0, p10 = 0, q10 = 0;
+      f10 = 0, l10 = 0, m10 = 0, ms10 = 0, n10 = 0, o10 = 0, d210 = 0, p10 = 0, q10 = 0, s10 = 0;
   let g11 = 0, i11 = 0, j11 = 0, lullW = 0, lullWn = 0, lullO = 0, lullOn = 0;
   let aroundB = 0, aroundN = 0, aroundBorn = 0, aroundT = 0, otherB = 0, otherN = 0, otherBorn = 0, otherT = 0;
   for (let r = 0; r < 200; r++) {
@@ -2295,7 +2315,7 @@ async function runSelfTest() {
       }
     });
     until(sv2, x => !!x.word, 20);
-    for (let s = 0, n = 1 + (r % LANES); s < n; s++) { upTap(sv2); run(sv2, 0.25, watchLow); }
+    for (let s = 0, n = 2 + (r % (LANES - 1)); s < n; s++) { upTap(sv2); run(sv2, 0.25, watchLow); }
     run(sv2, 2.0, watchLow);
     if (endT >= 0 && !sameTick && !faded) m10++;
     if (sv2.stats.sinks > 0) ms10++;
@@ -2304,13 +2324,13 @@ async function runSelfTest() {
     const po = make(14400 + r);
     calm(po);
     until(po, x => !!x.word, 20);
-    upTap(po); run(po, 0.2);                                   // a run, in lane 1 (the wind there blows right)
-    po.gusts.push({ lane: 1, dir: 1, x: po.p.x + 150, len: 400, seed: 0, alpha: CONFIG.WALK_FADE_ALPHA, formA: 1, whooshed: true });
+    upTap(po); run(po, 0.2); upTap(po); run(po, 0.2);        // a run, in lane 2 (the wind there blows left)
+    po.gusts.push({ lane: 2, dir: -1, x: po.p.x - 150, len: 400, seed: 0, alpha: CONFIG.WALK_FADE_ALPHA, formA: 1, whooshed: true });
     run(po, 0.6);                                              // he stops: the run ends with the wave over him
     const stayedPO = po.state === 'PLAYING' && !po.run;
     run(po, 0.6);
     const wentOn = po.state === 'PLAYING';                     // shown again by now, yet it went on past him
-    press(po, 'ArrowRight');                                   // he steps on, still under its front
+    press(po, 'ArrowLeft');                                    // he steps on, still under its front
     run(po, 0.05);
     if (stayedPO && wentOn && po.state === 'SINKING') n10++;
     // o: the same when he looks aside out of a walk: the wave he is over goes on past him
@@ -2331,10 +2351,10 @@ async function runSelfTest() {
       const ps = make(14600 + 2 * r + k);
       calm(ps);
       until(ps, x => !!x.word, 20);
-      upTap(ps);                                               // a run, in lane 1 (the wind there blows right)
+      upTap(ps); run(ps, 0.2); upTap(ps);                      // a run, in lane 2 (the wind there blows left)
       until(ps, x => x.turnT >= x.run.last + CONFIG.RUN_GAP_S - 2 * STEP, 1);
-      const px = ps.p.x, over = { lane: 1, dir: 1, x: px + 150, len: 400, seed: 0, alpha: CONFIG.WALK_FADE_ALPHA, formA: 1, whooshed: true };
-      const next = { lane: 1, dir: 1, x: px - CONFIG.HITBOX_W / 2 - gap, len: 60, seed: 0, alpha: a0, formA: 1, whooshed: true };
+      const px = ps.p.x, over = { lane: 2, dir: -1, x: px - 150, len: 400, seed: 0, alpha: CONFIG.WALK_FADE_ALPHA, formA: 1, whooshed: true };
+      const next = { lane: 2, dir: -1, x: px + CONFIG.HITBOX_W / 2 + gap, len: 60, seed: 0, alpha: a0, formA: 1, whooshed: true };
       ps.gusts.push(over, next);
       let reachedT = -1, sinkT = -1;
       for (let i = 0; i < 90 && ps.state === 'PLAYING'; i++) {
@@ -2349,13 +2369,33 @@ async function runSelfTest() {
     const qs = make(14700 + r);
     calm(qs);
     until(qs, x => !!x.word, 20);
-    upTap(qs);                                               // a run, in lane 1 (the wind there blows right)
+    upTap(qs); run(qs, 0.2); upTap(qs);                      // a run, in lane 2 (the wind there blows left)
     until(qs, x => x.turnT >= x.run.last + CONFIG.RUN_GAP_S - 2 * STEP, 1);
-    qs.gusts.push({ lane: 1, dir: 1, x: qs.p.x - CONFIG.HITBOX_W / 2 - 5, len: 400, seed: 0, alpha: CONFIG.WALK_FADE_ALPHA, formA: 1, whooshed: true });
+    qs.gusts.push({ lane: 2, dir: -1, x: qs.p.x + CONFIG.HITBOX_W / 2 + 5, len: 400, seed: 0, alpha: CONFIG.WALK_FADE_ALPHA, formA: 1, whooshed: true });
     let qEnd = -1, qSink = -1;
     qs.on(type => { if (type === 'runEnd') qEnd = qs.turnT; if (type === 'sink') qSink = qs.turnT; });
     run(qs, 1.2);
     if (qEnd >= 0 && qSink - qEnd >= 0.4 && qSink - qEnd <= 0.7) q10++;
+    // s: one step up while He speaks is a quiet start: the wind cannot touch him, but he does not glow, the waves
+    //    near him do not fade, nothing is counted, and if no step follows it lapses quietly. A second step up
+    //    within RUN_GAP_S makes it a run that shows: he glows gold, the waves around him fade, it is counted.
+    const so = make(14800 + r), evS = [];
+    calm(so);
+    so.on(type => { if (type === 'run' || type === 'runEnd') evS.push(type); });
+    until(so, x => !!x.word, 20);
+    const nearS = { lane: 3, dir: 1, x: so.p.x + 200, len: 400, seed: 0, alpha: 1, formA: 1, whooshed: true };   // across his column
+    so.gusts.push(nearS);
+    upTap(so); run(so, 0.4);
+    const quietS = !!so.run && !so.glowing() && nearS.alpha > 0.95 && so.stats.comeRuns === 0 && evS.length === 0;
+    upTap(so); run(so, 0.3);
+    const shownS = !!so.run && so.glowing() && nearS.alpha < 0.5 && so.stats.comeRuns === 1 && evS.join() === 'run';
+    const s1 = make(14900 + r), evS1 = [];
+    s1.on(type => { if (type === 'run' || type === 'runEnd') evS1.push(type); });
+    until(s1, x => !!x.word, 20);
+    upTap(s1); run(s1, 0.05);
+    const quiet1 = !!s1.run && !s1.glowing() && s1.p.lane === 1;
+    run(s1, CONFIG.RUN_GAP_S + 0.05);
+    if (quietS && shownS && quiet1 && !s1.run && evS1.length === 0 && s1.stats.comeRuns === 0) s10++;
     // h: in a run the waves around his column fade (he passes over them) and come back once he is past them
     const fd = make(13400 + r);
     until(fd, x => !!x.word, 20);
@@ -2365,6 +2405,7 @@ async function runSelfTest() {
       if (i % 15 === 0) upTap(fd);
       fd.update(STEP);
       if (!fd.run) { fadeOK = false; break; }
+      if (!fd.run.shown) continue;                          // it shows from the second step up
       const R = CONFIG.WALK_FADE_RADIUS, px = fd.p.x;
       for (const x of fd.gusts) {
         const lo = Math.min(x.x, x.x - x.dir * x.len), hi = Math.max(x.x, x.x - x.dir * x.len);
@@ -2464,12 +2505,12 @@ async function runSelfTest() {
   check(10, '"Come": tapping on while He speaks passes over the waves from anywhere to Jesus; stopping or stepping aside ends the run; no run without the Word or once it has gone',
         a10 === 200 && k10 === 200 && f10 === 200 && b10 === 200 && c10 === 200 && c810 === 200 && d10 === 200 && d210 === 200 && e10 === 200 &&
         ej10 <= 2 && e210 === 200 && es210 >= 180 && l10 === 200 && m10 === 200 && n10 === 200 && o10 === 200 && h10 === 200 &&
-        cs10 >= 100 && ms10 >= 100 && p10 === 400 && q10 === 200,
+        cs10 >= 100 && ms10 >= 100 && p10 === 400 && q10 === 200 && s10 === 200,
         'run from anywhere ' + a10 + '/200, slowest promised run ' + k10 + '/200, firm presses ' + f10 + '/200, waves cannot touch him in a run (and can once he stops) ' + b10 +
         '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 + '), also at the last lane ' + c810 + '/200, stepping aside ends it ' + d10 +
         '/200 (into a wave that shows, he sinks at once: ' + d210 + '/200), no run without the Word ' + e10 + '/200 (through by tapping on his own: ' + ej10 + '), nor once the bubble has gone ' + e210 +
         '/200 (then sank: ' + es210 + '), past 0:00 a stop is "Time\'s up" ' + l10 + '/200, after a stop only waves that come later and have shown a while reach him ' + m10 +
-        '/200 (sank: ' + ms10 + '), the wave he stopped over goes on past him ' + n10 + '/200, also out of a walk ' + o10 + '/200, waves still to come reach him after a stop ' + p10 + '/400, a faded one shows first ' + q10 + '/200, waves fade around a run ' + h10 + '/200');
+        '/200 (sank: ' + ms10 + '), the wave he stopped over goes on past him ' + n10 + '/200, also out of a walk ' + o10 + '/200, waves still to come reach him after a stop ' + p10 + '/400, a faded one shows first ' + q10 + '/200, one step is quiet and the second shows (glow, fading) ' + s10 + '/200, waves fade around a run ' + h10 + '/200');
   const lullD = Math.abs(lullW / Math.max(1, lullWn) - lullO / Math.max(1, lullOn));
   const aroundD = Math.abs(aroundB / Math.max(1, aroundN) - otherB / Math.max(1, otherN));
   const bornR = (aroundBorn / Math.max(1e-9, aroundT)) / (otherBorn / Math.max(1e-9, otherT));
