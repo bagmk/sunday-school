@@ -25,7 +25,7 @@
 "use strict";
 
 // Phone version: portrait, swipe controls. The simulation, swipe rules and sound are the same code as
-// the keyboard version (index.html); only the layout, drawing and input wiring differ.
+// the keyboard version (index.html); the layout, drawing, input wiring and the wind's tuning differ.
 
 // ============================================================================
 // Tunables
@@ -40,9 +40,10 @@ const CONFIG = {
   WORD_WALK_CROSS_S: 5.0,  // time to cross all 8 lanes while holding up
   STILL_LIMIT_S: 2.0,      // standing still on the sea starts sinking
   PLAYER_TIME_S: 60,       // per-player turn, unlimited respawns
-  // Lengths and speeds are on the keyboard version's scale x 0.9 (columns are 72 px, not 80). Every lane
-  // is busy and the second-to-last (lane 7) is the fastest and densest of all; touch is less nimble than
-  // keys, so the lower lanes are a little lighter and lane 7 a little less dense than there.
+  // Lengths and speeds are the keyboard version's x 0.9 (columns are 72 px, not 80), except lane 7: 310 px/s
+  // and 240 px on that scale (there 330 and 255). Every lane is busy and lane 7 (second-to-last) is the
+  // fastest and densest of all. Touch is less nimble than keys, so lanes 2-8 come a little less often than
+  // there (GUST_GAP_MUL) and lane 7 is a little slower and shorter.
   LANE_SPEED: [85.5, 103.5, 121.5, 139.5, 162, 184.5, 279, 229.5],   // px/s, lane 1 -> 8
   GUST_LEN:   [108, 126, 130.5, 144, 153, 162, 216, 180],            // px, lane 1 -> 8
   SUDDEN_P:   [0, 0, 0, 0, 0, 0, 0, 0],                              // no gust ever forms out of nowhere at his column
@@ -71,8 +72,9 @@ const CONFIG = {
   // (even after the bubble fades) the waves cannot touch him (they fade as he passes over them), and from
   // the last lane a step up reaches Him. Stopping or stepping aside ends it.
   RUN_GAP_S: 0.5,
-  WALK_FADE_RADIUS: 56,        // gusts this close to Peter's column fade during a Word Walk
+  WALK_FADE_RADIUS: 56,        // gusts this close to Peter's column fade during a Word Walk or a run
   WALK_FADE_ALPHA: 0.15,
+  HIT_MIN_ALPHA: 0.75,         // a gust faded that way can touch him only once it shows this much again
   WORD_INTERVAL_RANGE: [8, 12],
   DIFFICULTY: [0.85, 1.0, 1.15],   // presets on keys 1 / 2 / 3
   TIMEUP_S: 2.0,
@@ -195,7 +197,7 @@ class Game {
   gap(n) {
     const a = CONFIG.GUST_GAP_S[0], b = CONFIG.GUST_GAP_S[1];
     const g = a + (b - a) * this.rng();
-    return g * CONFIG.GUST_GAP_MUL[n - 1];
+    return g * CONFIG.GUST_GAP_MUL[n - 1] / this.diff;   // a faster wind also comes more often: same spacing, shorter openings
   }
 
   resetWorld() {
@@ -210,6 +212,7 @@ class Game {
                trailA: 0, trailX: CX, trailTop: laneY(0) };
     this.arming = null;
     this.run = null;               // a run on the Word: { last } = the time of its latest step
+    this.passOver = null;          // gusts he was over when a run or walk ended: they go on past him
     this.word = null;
     this.lastWordStart = null;
     this.nextWordAt = CONFIG.WORD_FIRST_AT_S;
@@ -334,7 +337,14 @@ class Game {
     if (!this.run) return;
     this.run = null;
     this.p.stillT = 0;
+    this.markPassOver();
     this.emit('runEnd', { reason: reason, lane: this.p.lane });
+  }
+  // The waves he is over as he stops (faded, as he was passing over them) go on past him: none of them can
+  // sink him while he stays where he is. Only waves still to come, seen coming, can.
+  markPassOver() {
+    this.passOver = new Set();
+    for (const g of this.gusts) if (this.covers(g)) this.passOver.add(g);
   }
 
   setWordInterval(v) {
@@ -359,6 +369,7 @@ class Game {
     const entered = lane !== p.lane;
     p.lane = lane; p.col = col; p.x = colX(col); p.y = laneY(lane);
     p.stillT = 0;
+    this.passOver = null;                // he moved on: the waves he stopped over are behind him
     p.cooldownUntil = this.t + CONFIG.STEP_COOLDOWN_MS / 1000;
     if (lane > this.stats.maxLane) this.stats.maxLane = lane;
     if (lane >= 1 && (entered || lane === LANES) && !this.run) this.rollSudden(lane);
@@ -413,6 +424,10 @@ class Game {
     // (A gust may form where he lets go only if WALK_EXIT_SUDDEN_P is raised; it is 0.)
     if (n >= 1 && this.rng() < CONFIG.WALK_EXIT_SUDDEN_P) this.addTele(n, p.x, CONFIG.WALK_EXIT_TELEGRAPH_S);
     this.emit('walkExit', { reason: reason, lane: n });
+    // Letting go of ↑ is not stopping: he goes on as in a run, and a step up within RUN_GAP_S (at once, with no
+    // cooldown) keeps the waves off him. Looking aside (← → ↓) ends the walk with no run.
+    if (reason === 'release') { p.cooldownUntil = this.t; this.runStep(); }
+    else this.markPassOver();
   }
   reach() {
     const p = this.p;
@@ -449,20 +464,27 @@ class Game {
     this.state = 'RESPAWN';
     this.respawnT = 0;
     this.tele = [];
+    this.passOver = null;
     this.calmUntil = this.t + CONFIG.RESPAWN_CALM_S;   // the wind ceased (14:32)
     this.emit('respawn');
   }
 
-  hitTest() {
+  // True when the gust's colliding front part overlaps Peter's body.
+  covers(g) {
     const p = this.p, hw = CONFIG.HITBOX_W / 2;
-    const x0 = p.x - hw, x1 = p.x + hw, y0 = p.y + CONFIG.HITBOX_DY, y1 = y0 + CONFIG.HITBOX_H;
+    const y0 = p.y + CONFIG.HITBOX_DY, y1 = y0 + CONFIG.HITBOX_H;
+    if (g.lane !== p.lane) return false;
+    const cy = laneY(g.lane);
+    if (y1 < cy - CONFIG.GUST_CORE_HALF_H || y0 > cy + CONFIG.GUST_CORE_HALF_H) return false;
+    const c = coreSpan(g);
+    return c[1] >= p.x - hw && c[0] <= p.x + hw;
+  }
+  hitTest() {
     for (let i = 0; i < this.gusts.length; i++) {
       const g = this.gusts[i];
-      if (g.lane !== p.lane) continue;
-      const cy = laneY(g.lane);
-      if (y1 < cy - CONFIG.GUST_CORE_HALF_H || y0 > cy + CONFIG.GUST_CORE_HALF_H) continue;
-      const c = coreSpan(g);
-      if (c[1] >= x0 && c[0] <= x1) return g;
+      if (g.alpha < CONFIG.HIT_MIN_ALPHA) continue;   // faded around a run or walk: it reaches him once it shows again
+      if (this.passOver && this.passOver.has(g)) continue;
+      if (this.covers(g)) return g;
     }
     return null;
   }
@@ -512,12 +534,12 @@ class Game {
 
   updatePlaying(dt) {
     const p = this.p;
+    if (this.run && this.turnT - this.run.last > CONFIG.RUN_GAP_S + 1e-9) this.endRun('stop');   // he stopped
     if (this.turnT >= CONFIG.PLAYER_TIME_S && !this.arming && !this.run) { this.toTimeUp(); return; }
     if (this.arming) {
       if (!this.held.ArrowUp) this.arming = null;
       else if (this.turnT - this.arming.t0 >= CONFIG.WORD_HOLD_ARM_S - 1e-6) { this.startWalk(); return; }
     }
-    if (this.run && this.turnT - this.run.last > CONFIG.RUN_GAP_S + 1e-9) this.endRun('stop');   // he stopped
     if (this.arming || this.run) return;           // stepping out, or going on the Word: the wind cannot touch him
     if (p.lane >= 1) {
       p.stillT += dt;
@@ -1650,8 +1672,8 @@ function danger(g, lane, x, t0, t1, react) {
   }
   return false;
 }
-// Greedy dodging bot: steps up when the lane above looks clear for 0.6 s, sidesteps when threatened.
-// Optional bot.react (s) delays noticing telegraphs; bot.every (ticks) slows decisions.
+// Greedy dodging bot: steps up when the lane above looks clear for 0.6 s (or bot.look s), sidesteps when
+// threatened. Optional bot.react (s) delays noticing telegraphs; bot.every (ticks) slows decisions.
 function botTick(g, bot) {
   if (bot.key) { g.keyUp(bot.key); bot.key = null; }
   if (g.state !== 'PLAYING') return;
@@ -1661,7 +1683,7 @@ function botTick(g, bot) {
   const R = bot.react || 0;
   const threatened = p.lane >= 1 && danger(g, p.lane, p.x, 0, 0.3, R);
   let act = null;
-  const upClear = p.lane >= LANES ? true : !danger(g, p.lane + 1, p.x, 0, 0.6, R);
+  const upClear = p.lane >= LANES ? true : !danger(g, p.lane + 1, p.x, 0, bot.look || 0.6, R);
   if (upClear && !(p.lane >= LANES && threatened)) act = 'ArrowUp';
   if (!act && (threatened || (p.lane >= 1 && p.stillT > 1.4))) {
     const order = bot.rng() < 0.5 ? [-1, 1] : [1, -1];
@@ -1682,7 +1704,13 @@ async function runSelfTest() {
   const results = [];
   const log = (...a) => console.log('[selftest]', ...a);
   const check = (id, name, pass, detail) => { results.push({ id: id, name: name, pass: !!pass, detail: detail }); log(pass ? 'PASS' : 'FAIL', id, name, '—', detail); };
-  const make = seed => { const g = new Game({ rng: mulberry32(seed) }); g.startTurn(); return g; };
+  let formedAll = 0;                // gusts formed out of nowhere, over every scenario turn below
+  const make = seed => {
+    const g = new Game({ rng: mulberry32(seed) });
+    g.on(type => { if (type === 'telegraph' || type === 'gustForm') formedAll++; });
+    g.startTurn();
+    return g;
+  };
   const until = (g, pred, maxS) => { const n = Math.round(maxS / STEP); for (let i = 0; i < n; i++) { if (pred(g)) return true; g.update(STEP); } return pred(g); };
   const run = (g, secs, each) => { const n = Math.round(secs / STEP); for (let i = 0; i < n; i++) { if (each) each(g); g.update(STEP); } };
   const yieldUI = () => new Promise(r => setTimeout(r, 0));
@@ -1691,11 +1719,10 @@ async function runSelfTest() {
 
   // 1 + 6 + 7: a greedy dodging bot on its own strength (He never speaks here), sinking order, stats
   //    bookkeeping. Every lane is busy and the second-to-last one most of all: even this quick, sharp-eyed
-  //    player gets far, mostly goes down at lane 6 or 7, and only now and then gets all the way. No gust
-  //    ever forms out of nowhere.
+  //    player gets far, mostly goes down at lane 6 or 7, and only now and then gets all the way.
   const RUNS = 200;
   const pct = (n, d) => (100 * n / Math.max(1, d)).toFixed(0) + '%';
-  let reachedRuns = 0, seqOK = true, captionOK = true, statsOK = true, sinksTotal = 0, upper = 0, formed = 0, sinksHigh = 0;
+  let reachedRuns = 0, seqOK = true, captionOK = true, statsOK = true, sinksTotal = 0, upper = 0, sinksHigh = 0;
   const hist = new Array(LANES + 1).fill(0);
   for (let r = 0; r < RUNS; r++) {
     const g = make(1000 + r);
@@ -1709,7 +1736,6 @@ async function runSelfTest() {
       if (cnt[type] !== undefined) cnt[type]++;
       if ((type === 'step' || type === 'walkExit') && d.lane > maxSeen) maxSeen = d.lane;
       if (type === 'reached') maxSeen = LANES;
-      if (type === 'telegraph' || type === 'gustForm') formed++;
       if (type === 'sink' && d.lane >= LANES - 2 && d.lane < LANES) sinksHigh++;
       if (d && typeof d.text === 'string' && /game\s?over/i.test(d.text)) captionOK = false;
     });
@@ -1734,10 +1760,10 @@ async function runSelfTest() {
     }
     if (r % 10 === 9) await yieldUI();
   }
-  check(1, 'On its own strength a greedy dodging bot gets far but seldom all the way; most sinkings are at lane 6 or 7; no gust forms out of nowhere (' + RUNS + ' runs)',
-        upper / RUNS >= 0.85 && reachedRuns / RUNS <= 0.25 && sinksHigh / Math.max(1, sinksTotal) >= 0.5 && formed === 0,
+  check(1, 'On its own strength a greedy dodging bot gets far but seldom all the way; most sinkings are at lane 6 or 7 (' + RUNS + ' runs)',
+        upper / RUNS >= 0.85 && reachedRuns / RUNS <= 0.25 && sinksHigh / Math.max(1, sinksTotal) >= 0.5,
         'lane ≥ 5 in ' + pct(upper, RUNS) + ' of turns, Jesus in ' + pct(reachedRuns, RUNS) + '; sinkings at lane 6–7 ' + pct(sinksHigh, sinksTotal) +
-        ' of ' + sinksTotal + '; gusts formed out of nowhere ' + formed + '; best-lane histogram [0..8] = ' + hist.join(','));
+        ' of ' + sinksTotal + '; best-lane histogram [0..8] = ' + hist.join(','));
 
   // 1b: a human-like bot (decides every 0.15 s) on its own strength usually gets to lane 5 or higher and
   //     almost never all the way
@@ -1756,6 +1782,69 @@ async function runSelfTest() {
   }
   check('1b', 'Human-like bot on its own strength regularly reaches lane 5 or higher, almost never Jesus', hUpper / RUNS >= 0.6 && hReached / RUNS <= 0.05,
         pct(hUpper, RUNS) + ' of turns reached lane ≥ 5; Jesus in ' + pct(hReached, RUNS) + ' (' + hReached + '); histogram [0..8] = ' + hh.join(','));
+
+  // 1c: a bold, quick player (steps up when the lane above is clear for just 0.25 s) gets all the way now and
+  //     then on its own strength, so the top is no wall; but most of its tries end at lane 6 or 7, lane 7 far
+  //     more than the last lane
+  let bTries = 0, bJesus = 0, bSinks = 0, bHigh = 0, b7 = 0, b8 = 0;
+  for (let r = 0; r < RUNS; r++) {
+    const g = make(14000 + r);
+    g.nextWordAt = Infinity;
+    const bot = { key: null, rng: mulberry32(14500 + r), every: 9, look: 0.25 };
+    g.on((type, d) => {
+      if (type === 'sink') {
+        bTries++; bSinks++;
+        if (d.lane >= LANES - 2 && d.lane < LANES) bHigh++;
+        if (d.lane === LANES - 1) b7++;
+        if (d.lane === LANES) b8++;
+      }
+      if (type === 'reached') { bTries++; bJesus++; }
+    });
+    let guard = 0;
+    while (g.state !== 'TURN_END' && guard++ < 60 * 120) { botTick(g, bot); g.update(STEP); }
+    if (r % 10 === 9) await yieldUI();
+  }
+  check('1c', 'A bold, quick player gets all the way now and then on its own (no wall), but most tries end at lane 6 or 7, lane 7 most',
+        bJesus / bTries >= 0.02 && bJesus / bTries <= 0.25 && bHigh / Math.max(1, bSinks) >= 0.5 && b7 >= 3 * b8 && b7 > 0,
+        'Jesus in ' + pct(bJesus, bTries) + ' of ' + bTries + ' tries; sinkings at lane 6–7 ' + pct(bHigh, bSinks) + ' (lane 7: ' + b7 + ', lane 8: ' + b8 + ')');
+
+  // 1d: the wind itself, at the middle column over five minutes: lane 7 is clear less than any other lane and
+  //     the last lane clearly more, yet lane 7 still opens up often enough to be tried (no wall). And the same
+  //     wind on keys 1 / 2 / 3: the faster it blows, the less often a 0.4 s opening comes in lane 7 (3 is harder).
+  const survey = async di => {
+    const sv = new Game({ rng: mulberry32(15000) });
+    sv.diffIdx = di; sv.resetWorld();                  // the same draws at every difficulty
+    const hw1 = CONFIG.HITBOX_W / 2, clearN = new Array(LANES + 1).fill(0), clearRun = new Array(LANES + 1).fill(0);
+    let opens = 0, start = 0, ticks = 0;
+    for (let i = 0; i < 60 * 300; i++) {
+      sv.updateGusts(STEP);
+      ticks++;
+      for (let n = 1; n <= LANES; n++) {
+        let hit = false;
+        for (const x of sv.gusts) {
+          if (x.lane !== n) continue;
+          const c = coreSpan(x);
+          if (c[1] >= CX - hw1 && c[0] <= CX + hw1) { hit = true; break; }
+        }
+        if (!hit) { clearN[n]++; clearRun[n] += STEP; }
+        else {
+          if (n === LANES - 1 && clearRun[n] >= 0.4 - 1e-9) { opens++; start += clearRun[n] - 0.4; }
+          clearRun[n] = 0;
+        }
+      }
+      if (i % 3600 === 3599) await yieldUI();
+    }
+    return { share: clearN.map(c => c / ticks), perMin: opens / 5, start: start / (ticks * STEP) };
+  };
+  const sv1 = await survey(0), sv2 = await survey(1), sv3 = await survey(2);
+  const share1 = sv2.share;
+  let lowest7 = true;
+  for (let n = 1; n <= LANES; n++) if (n !== LANES - 1 && share1[n] <= share1[LANES - 1]) lowest7 = false;
+  check('1d', 'The wind: lane 7 is clear least of all lanes and the last lane clearly more, yet lane 7 opens up often (no wall); key 3 harder than 2, 2 than 1',
+        lowest7 && share1[LANES] - share1[LANES - 1] >= 0.03 && sv2.perMin >= 5 && sv1.start > sv2.start && sv2.start > sv3.start,
+        'clear at the middle, lanes 1–8: ' + share1.slice(1).map(s => (100 * s).toFixed(0) + '%').join(' ') +
+        '; lane 7 openings of 0.4 s or more: ' + sv2.perMin.toFixed(1) + ' a minute; time a 0.4 s opening can start, keys 1/2/3: ' +
+        [sv1, sv2, sv3].map(v => (100 * v.start).toFixed(1) + '%').join(' / '));
 
   // 2: press-and-hold up at a Word window from the boat
   let ok2 = 0, tMin = Infinity, tMax = -Infinity;
@@ -1809,30 +1898,48 @@ async function runSelfTest() {
   check(3, 'Holding ↑ from before a window (or tapping) does not start a Word Walk', walks3 === 0 && walks3b === 0 && walks3c === 0,
         'walks while pre-held ' + walks3 + ', from taps ' + walks3b + ', from same-frame re-presses ' + walks3c);
 
-  // 4: leaving the walk restores normal rules at once
-  let ok4 = 0, tele4 = 0, n4 = 0;
+  // 4: letting go mid-walk, in any lane: letting go of ↑ is going on (as in a run, the waves stay off him while a
+  //    step up follows within RUN_GAP_S, at once and with no cooldown, and reach him once he stops); ← → ↓ is
+  //    looking at the wind: normal rules at once. Either way he is back on a lane at once.
+  let ok4 = 0, n4 = 0, rel4 = 0;
   const exits = ['release', 'ArrowLeft', 'ArrowRight', 'ArrowDown'];
   for (let r = 0; r < 200; r++) {
     const g = make(4000 + r);
     until(g, x => !!x.word, 20);
     g.keyDown('ArrowUp', false);
     until(g, x => x.state === 'WORD_WALK', 1);
-    run(g, 2.0);
+    const target = 1 + (r % LANES);
+    until(g, x => x.state !== 'WORD_WALK' || nearestLane(x.p.y) === target, 6);
     if (g.state !== 'WORD_WALK') continue;
     n4++;
-    const how = exits[r % 4];
+    g.spawnEnabled = false; g.gusts = [];               // only the gusts placed below
+    const how = exits[(r >> 3) % 4];
     if (how === 'release') g.keyUp('ArrowUp'); else g.keyDown(how, false);
     const p = g.p;
-    const normal = g.state === 'PLAYING' && !g.arming && Math.abs(p.y - laneY(p.lane)) < 1e-9;
-    if (g.tele.length > 0) tele4++;
-    const dir = laneDir(p.lane);
-    g.gusts.push({ lane: p.lane, dir: dir, x: p.x + dir * 20, len: 160, seed: 0, alpha: 1, formA: 1, whooshed: true });
-    g.update(STEP);
-    if (normal && g.state === 'SINKING') ok4++;
+    const onLane = g.state === 'PLAYING' && !g.arming && p.lane === target && Math.abs(p.y - laneY(p.lane)) < 1e-9;
+    const hitNow = () => {
+      const dir = laneDir(p.lane);
+      g.gusts.push({ lane: p.lane, dir: dir, x: p.x + dir * 20, len: 160, seed: 0, alpha: 1, formA: 1, whooshed: true });
+      g.update(STEP);
+    };
+    if (how === 'release') {
+      rel4++;
+      const going = !!g.run && g.t >= p.cooldownUntil - 1e-9;   // and a step up would go at once
+      hitNow();
+      const passed = g.state === 'PLAYING';
+      g.gusts = [];
+      run(g, CONFIG.RUN_GAP_S + 0.05);                          // no step follows: he has stopped
+      const stopped = g.state === 'PLAYING' && !g.run;
+      hitNow();
+      if (onLane && going && passed && stopped && g.state === 'SINKING') ok4++;
+    } else {
+      hitNow();
+      if (onLane && !g.run && g.state === 'SINKING') ok4++;
+    }
   }
-  const rate4 = n4 ? tele4 / n4 : 0;
-  check(4, 'Releasing ↑ (or ← → ↓) mid-walk restores normal rules instantly; no gust forms where he lets go', n4 === 200 && ok4 === n4 && tele4 === 0,
-        ok4 + '/' + n4 + ' snapped + collidable next tick; gusts formed where he let go ' + tele4 + ' (' + (100 * rate4).toFixed(0) + '%)');
+  check(4, 'Letting go of ↑ mid-walk goes on as a run (the waves reach him once he stops); ← → ↓ mid-walk: normal rules at once',
+        n4 === 200 && ok4 === n4,
+        ok4 + '/' + n4 + ' (letting go of ↑ ' + rel4 + ', looking aside ' + (n4 - rel4) + '; exits spread over lanes 1–8)');
 
   // 5: standing still on the sea
   let ok5 = 0;
@@ -1858,7 +1965,7 @@ async function runSelfTest() {
 
   // 7: per-player stats (debug overlay only; no scoreboard) match the session's events,
   //    on the bot turns above and on 40 walking turns (odd: walk to Jesus; even: let go mid-walk, then the
-  //    bot plays on, on its own strength)
+  //    bot plays on with the Word still coming)
   let walked7 = 0, reached7 = 0, stats7OK = true;
   for (let r = 0; r < 40; r++) {
     const g = make(6000 + r), rr = mulberry32(6500 + r);
@@ -1874,8 +1981,6 @@ async function runSelfTest() {
     g.keyDown('ArrowUp', false);
     until(g, x => x.state === 'REACHED', r % 2 ? 6 : 0.6 + 3.5 * rr());
     g.keyUp('ArrowUp');
-    g.nextWordAt = Infinity;                       // the bot plays on without the Word (and the open one ends)
-    if (g.word) g.word.end = g.turnT;
     let guard = 0;
     while (g.state !== 'TURN_END' && guard++ < 60 * 120) { botTick(g, bot); g.update(STEP); }
     const st = g.stats;
@@ -1884,10 +1989,30 @@ async function runSelfTest() {
     if (st.wordsHeard !== cnt.wordOpen || st.wordWalks !== cnt.walk || st.sinks !== cnt.sink || st.comeRuns !== cnt.run ||
         st.maxLane !== maxSeen || st.reached !== (cnt.reached > 0)) stats7OK = false;
   }
-  const ok7 = statsOK && stats7OK && walked7 === 40 && reached7 === 20;
+  // 7b: counts above one: 40 s in the boat (four Words); at the second and the fourth he runs three lanes and
+  //     stops there
+  let stats7b = 0;
+  for (let r = 0; r < 20; r++) {
+    const g = make(6900 + r);
+    const cnt = { wordOpen: 0, walk: 0, sink: 0, run: 0 };
+    let taps = 0, next = 0;
+    g.on(type => {
+      if (cnt[type] !== undefined) cnt[type]++;
+      if (type === 'wordOpen' && (cnt.wordOpen === 2 || cnt.wordOpen === 4)) { taps = 3; next = g.turnT; }
+    });
+    for (let i = 0; i < 60 * 40; i++) {
+      if (taps > 0 && g.state === 'PLAYING' && g.turnT >= next - 1e-9) { g.keyDown('ArrowUp', false); g.keyUp('ArrowUp'); taps--; next = g.turnT + 0.25; }
+      g.update(STEP);
+    }
+    const st = g.stats;
+    if (st.wordsHeard === cnt.wordOpen && st.wordsHeard >= 4 && st.comeRuns === cnt.run && st.comeRuns === 2 &&
+        st.sinks === cnt.sink && st.wordWalks === cnt.walk) stats7b++;
+  }
+  const ok7 = statsOK && stats7OK && walked7 === 40 && reached7 === 20 && stats7b === 20;
   check(7, 'Per-player stats match the session events', ok7,
         (statsOK ? RUNS + ' bot turns consistent' : 'bot-turn mismatch') + '; walking turns ' +
-        (stats7OK ? 'consistent' : 'MISMATCH') + ' (' + walked7 + ' walked, ' + reached7 + ' all the way to Jesus)');
+        (stats7OK ? 'consistent' : 'MISMATCH') + ' (' + walked7 + ' walked, ' + reached7 + ' all the way to Jesus); four Words and two runs counted right ' +
+        stats7b + '/20');
 
   // 8: zero network requests
   const res = (performance.getEntriesByType && performance.getEntriesByType('resource')) || [];
@@ -1950,9 +2075,10 @@ async function runSelfTest() {
     for (let s = 0; s < 4; s++) { KF.tap(); KF.adv(s < 3 ? 0.25 : 0.02); }
     KF.G.down(7, 200, 500, KF.clock()); KF.adv(0.27);               // rests: a hold forms, no step
     KF.G.move(7, 200, 485); KF.G.move(7, 200, 470); KF.G.up(7);     // then flicks up: the fifth step
+    const flicked = kf.p.lane === 5 && !!kf.run;
     for (let s = 0; s < 14 && kf.state === 'PLAYING'; s++) { KF.tap(); KF.adv(0.25); }
     KF.adv(1.0);
-    if (shortRest && dodged && kk.p.lane === 1 && kk.p.col === -1 && kk.stats.wordWalks === 0 && kf.state === 'REACHED') k9++;
+    if (shortRest && dodged && kk.p.lane === 1 && kk.p.col === -1 && kk.stats.wordWalks === 0 && flicked && kf.state === 'REACHED') k9++;
     // c: taps and quick swipes during the windows never walk
     const k = make(9800 + r), V = touch(k);
     for (let i = 0; i < 300; i++) {
@@ -2042,7 +2168,7 @@ async function runSelfTest() {
     if (overlapOK && gripOK && overlapWordOK && walk9 && wk.state === 'WORD_WALK') i9++;
     if (r % 10 === 9) await yieldUI();
   }
-  check(9, 'Swipe controls: swipe ↑ and hold, or press and hold while He speaks, reaches Jesus; taps and earlier rests do not; turn ends are not skipped',
+  check(9, 'Swipe controls: swipe ↑ and hold, or press and hold while He speaks, walks to Jesus; taps and earlier rests never start a walk; a flick in a run is a step; turn ends are not skipped',
         a9 === n9 && b9 === n9 && k9 === n9 && c9 === 0 && d9 === 0 && e9 === n9 && f9 === n9 && g9 === n9 && h9 === n9 && i9 === n9,
         'swipe and hold ' + a9 + '/' + n9 + ' (' + t9lo.toFixed(3) + '–' + t9hi.toFixed(3) + ' s), press and hold ' + b9 + '/' + n9 +
         ', short rest = one step and hesitant dodge = dodge ' + k9 + '/' + n9 + ', walks from taps ' + c9 +
@@ -2053,7 +2179,9 @@ async function runSelfTest() {
   // 10: "Come": the wind flows on as always, every lane busy. Steps up taken while He speaks start a run from
   //     wherever Peter is; while each next step up follows within RUN_GAP_S he passes over the waves (they
   //     cannot touch him and fade around him), and from the last lane a step up reaches Him. Stopping or
-  //     stepping aside ends the run; without the Word there is no run.
+  //     stepping aside ends the run; there is no run without the Word, or once the bubble has gone.
+  // 11: and the wind flows as always meanwhile: CONFIG speeds, in at one edge and out at the other, no lull while
+  //     He speaks; difficulty keys act at once; + and - set the next Word.
   const upTap = g => { g.keyDown('ArrowUp', false); g.keyUp('ArrowUp'); };
   const tapEvery = (g, gap, secs, first) => {
     let next = g.turnT + (first || 0);
@@ -2068,7 +2196,22 @@ async function runSelfTest() {
     const p = g.p, dir = laneDir(p.lane);
     g.gusts.push({ lane: p.lane, dir: dir, x: p.x + dir * 20, len: 160, seed: 0, alpha: 1, formA: 1, whooshed: true });
   };
-  let a10 = 0, k10 = 0, b10 = 0, c10 = 0, cs10 = 0, d10 = 0, e10 = 0, ej10 = 0, g10 = 0, h10 = 0, i10 = 0, j10 = 0;
+  const onBody = (g, x) => {                            // a gust's colliding front part overlaps Peter's body
+    const q = g.p, hw = CONFIG.HITBOX_W / 2, y0 = q.y + CONFIG.HITBOX_DY, y1 = y0 + CONFIG.HITBOX_H;
+    if (x.lane !== q.lane) return false;
+    const cy = laneY(x.lane);
+    if (y1 < cy - CONFIG.GUST_CORE_HALF_H || y0 > cy + CONFIG.GUST_CORE_HALF_H) return false;
+    const c = coreSpan(x);
+    return c[1] >= q.x - hw && c[0] <= q.x + hw;
+  };
+  const blockedMid = (g, n) => {
+    const hw = CONFIG.HITBOX_W / 2;
+    for (const x of g.gusts) { if (x.lane !== n) continue; const c = coreSpan(x); if (c[1] >= CX - hw && c[0] <= CX + hw) return true; }
+    return false;
+  };
+  let a10 = 0, k10 = 0, b10 = 0, c10 = 0, cs10 = 0, c810 = 0, d10 = 0, e10 = 0, ej10 = 0, e210 = 0, es210 = 0, h10 = 0,
+      f10 = 0, l10 = 0, m10 = 0, ms10 = 0, n10 = 0, o10 = 0;
+  let g11 = 0, i11 = 0, j11 = 0, lullW = 0, lullWn = 0, lullO = 0, lullOn = 0;
   for (let r = 0; r < 200; r++) {
     const rr = mulberry32(12500 + r);
     // a: from anywhere (the boat or any lane, any column), starting at any moment while the bubble shows,
@@ -2090,6 +2233,18 @@ async function runSelfTest() {
     until(sl, x => x.turnT >= ws2 + CONFIG.WORD_DURATION_S - 0.04, 3);
     tapEvery(sl, 1 / 3, 9);
     if (sl.state === 'REACHED') k10++;
+    // f: pressing firmly gets there too: each press held 0.36–0.40 s (long enough to start a walk while He
+    //    speaks), the next one 0.03–0.09 s after letting go
+    const fp = make(14100 + r);
+    until(fp, x => !!x.word, 20);
+    const hold = 0.36 + 0.04 * rr(), gapF = 0.03 + 0.06 * rr();
+    for (let s = 0; s < 16 && fp.state === 'PLAYING'; s++) {
+      fp.keyDown('ArrowUp', false);
+      for (let i = 0, n = Math.round(hold / STEP); i < n && fp.state !== 'REACHED'; i++) fp.update(STEP);
+      fp.keyUp('ArrowUp');
+      run(fp, gapF);
+    }
+    if (fp.state === 'REACHED' || fp.stats.reached) f10++;
     // b: in a run the waves cannot touch him: a gust right on him does nothing; once he has stopped, one does
     const h = make(12200 + r);
     calm(h);
@@ -2111,6 +2266,14 @@ async function runSelfTest() {
     run(k, 1.6);
     if (stopped && !k.stats.reached) c10++;
     if (k.stats.sinks > 0) cs10++;
+    // c8: a run stopped at the last lane ends there too
+    const k8 = make(12450 + r);
+    let stopLane = -1;
+    k8.on((type, d) => { if (type === 'runEnd' && d.reason === 'stop') stopLane = d.lane; });
+    until(k8, x => !!x.word, 20);
+    for (let s = 0; s < LANES; s++) { upTap(k8); run(k8, 0.25); }
+    run(k8, CONFIG.RUN_GAP_S);
+    if (stopLane === LANES && !k8.stats.reached) c810++;
     // d: stepping aside mid-run ends it at once ("he saw the wind")
     const q = make(12600 + r);
     let looked = false;
@@ -2128,24 +2291,72 @@ async function runSelfTest() {
     }
     if (o.stats.comeRuns === 0) e10++;
     if (o.stats.reached) ej10++;
-    // g: the wind flows as always: every gust moves exactly its lane's speed each tick (none slows, stops or
-    //    jumps), except while the wind has ceased after a respawn
-    const w = make(13000 + r);
-    let natural = true, seen = 0;
-    let prev = new Map(w.gusts.map(x => [x, x.x]));
-    for (let i = 0; i < 60 * 14; i++) {
-      if (w.word && w.state === 'PLAYING' && i % 15 === 0) upTap(w);
-      const still = w.t + STEP < w.calmUntil, cm = w.calmMul;
-      w.update(STEP);
-      for (const x of w.gusts) {
-        if (!prev.has(x)) continue;
-        const dx = x.x - prev.get(x), want = still ? 0 : x.dir * w.laneSpeed(x.lane) * cm * STEP;
-        seen++;
-        if (Math.abs(dx - want) > 1e-6) natural = false;
-      }
-      prev = new Map(w.gusts.map(x => [x, x.x]));
+    // e2: nor once the bubble has gone: He spoke, nobody moved, and only 0.3–3 s later he taps on, four times a
+    //     second until just before He speaks again: ordinary steps, and the wind reaches him
+    const af = make(12900 + r);
+    until(af, x => !!x.word, 20);
+    until(af, x => !x.word, 3);
+    run(af, 0.3 + 2.7 * rr());
+    const nextAt = af.nextWordAt;
+    for (let i = 0; i < 60 * 6 && af.state === 'PLAYING' && af.turnT < nextAt - 0.05; i++) {
+      if (i % 15 === 0) upTap(af);
+      af.update(STEP);
     }
-    if (natural && seen > 0) g10++;
+    if (af.stats.comeRuns === 0) e210++;
+    if (af.stats.sinks > 0 && !af.stats.reached) es210++;
+    // l: a run that goes on past 0:00 and then stops ends the turn at once ("Time's up"), not in the sea
+    const tu = make(14200 + r);
+    tu.turnT = CONFIG.PLAYER_TIME_S - 1.2;
+    tu.nextWordAt = tu.turnT + 0.05;                     // He speaks just before 0:00
+    until(tu, x => !!x.word, 1);
+    let sankLate = false, runEndT = -1, upT = -2;
+    tu.on(type => { if (type === 'sink') sankLate = true; if (type === 'runEnd') runEndT = tu.turnT; if (type === 'timeUp') upT = tu.turnT; });
+    tapEvery(tu, 0.25, 1.6);                             // seven steps, through 0:00, then he stops
+    until(tu, x => x.state !== 'PLAYING', 2);
+    if (tu.state === 'TIMEUP' && !sankLate && tu.p.lane === LANES - 1 && Math.abs(upT - runEndT) < 1e-9) l10++;
+    // m: when a run stops, the waves he was over go on past him, and the faded ones around him come back: only a
+    //    wave that came afterwards and shows again can sink him (never on the tick the run ends)
+    const sv2 = make(14300 + r);
+    let endT = -1, faded = false, sameTick = false, endSet = new Set();
+    sv2.on((type, d) => {
+      if (type === 'runEnd') { endT = sv2.turnT; endSet = new Set(sv2.gusts.filter(x => onBody(sv2, x))); }
+      if (type === 'step') endSet = new Set();
+      if (type === 'sink' && d.reason === 'wind' && endT >= 0) {
+        if (sv2.turnT - endT < 1e-9) sameTick = true;
+        if (!sv2.gusts.some(x => onBody(sv2, x) && x.alpha >= CONFIG.HIT_MIN_ALPHA && !endSet.has(x))) faded = true;
+      }
+    });
+    until(sv2, x => !!x.word, 20);
+    for (let s = 0, n = 1 + (r % LANES); s < n; s++) { upTap(sv2); run(sv2, 0.25); }
+    run(sv2, 1.5);
+    if (endT >= 0 && !sameTick && !faded) m10++;
+    if (sv2.stats.sinks > 0) ms10++;
+    // n: the wave he is over when a run stops goes on past him while he stays put; once he steps on into it, it
+    //    is an ordinary wave again (it reaches him, now that it shows)
+    const po = make(14400 + r);
+    calm(po);
+    until(po, x => !!x.word, 20);
+    upTap(po); run(po, 0.2);                                   // a run, in lane 1 (the wind there blows right)
+    po.gusts.push({ lane: 1, dir: 1, x: po.p.x + 150, len: 400, seed: 0, alpha: CONFIG.WALK_FADE_ALPHA, formA: 1, whooshed: true });
+    run(po, 0.6);                                              // he stops: the run ends with the wave over him
+    const stayedPO = po.state === 'PLAYING' && !po.run;
+    run(po, 0.4);
+    const wentOn = po.state === 'PLAYING';                     // shown again by now, yet it went on past him
+    press(po, 'ArrowRight');                                   // he steps on, still under its front
+    run(po, 0.05);
+    if (stayedPO && wentOn && po.state === 'SINKING') n10++;
+    // o: the same when he looks aside out of a walk: the wave he is over goes on past him
+    const lw = make(14500 + r);
+    calm(lw);
+    until(lw, x => !!x.word, 20);
+    lw.keyDown('ArrowUp', false);
+    until(lw, x => x.state === 'WORD_WALK' && nearestLane(x.p.y) === 2, 3);
+    const dirO = laneDir(2);
+    lw.gusts.push({ lane: 2, dir: dirO, x: lw.p.x + dirO * 150, len: 400, seed: 0, alpha: CONFIG.WALK_FADE_ALPHA, formA: 1, whooshed: true });
+    press(lw, 'ArrowLeft');
+    lw.keyUp('ArrowUp');
+    run(lw, 0.4);
+    if (lw.p.lane === 2 && !lw.run && lw.state === 'PLAYING') o10++;
     // h: in a run the waves around his column fade (he passes over them) and come back once he is past them
     const fd = make(13400 + r);
     until(fd, x => !!x.word, 20);
@@ -2168,29 +2379,90 @@ async function runSelfTest() {
       }
     }
     if (fadeOK && seenIn > 0) h10++;
-    // i: after a difficulty key (the wind slower or faster at once) a run from the boat still reaches Him
+    // 11g: the wind flows as always: every gust moves at its lane's CONFIG speed each tick (none slows, stops or
+    //      jumps), comes in only at the edge it blows from and leaves only past the far one, except while the
+    //      wind has ceased after a respawn; and the middle of lanes 7-8 is blocked as often while He speaks as
+    //      at other times (no lull at "Come")
+    const w = make(13000 + r);
+    let natural = true, seen = 0;
+    const edge = CONFIG.SPAWN_MARGIN + 20;
+    let prev = new Map(w.gusts.map(x => [x, x.x]));
+    for (let i = 0; i < 60 * 14 && w.state !== 'TURN_END'; i++) {
+      if (w.word && w.state === 'PLAYING' && i % 15 === 0) upTap(w);
+      const still = w.t + STEP < w.calmUntil, cm = w.calmMul;
+      const v = n => CONFIG.LANE_SPEED[n - 1] * CONFIG.DIFFICULTY[w.diffIdx] * cm * STEP;
+      w.update(STEP);
+      if (w.state === 'TURN_END') break;                   // a new turn starts a new sea
+      const now = new Set(w.gusts);
+      for (const x of w.gusts) {
+        if (prev.has(x)) {
+          seen++;
+          if (Math.abs(x.x - prev.get(x) - (still ? 0 : x.dir * v(x.lane))) > 1e-6) natural = false;
+        } else {
+          const born = x.dir > 0 ? -CONFIG.SPAWN_MARGIN + v(x.lane) : CONFIG.W + CONFIG.SPAWN_MARGIN - v(x.lane);
+          if (still || Math.abs(x.x - born) > 1e-6) natural = false;
+        }
+      }
+      for (const [x, x0] of prev) {
+        if (now.has(x)) continue;
+        const xe = x0 + (still ? 0 : x.dir * v(x.lane));
+        if (x.dir > 0 ? xe - x.len < CONFIG.W + edge - 1e-6 : xe + x.len > -edge + 1e-6) natural = false;   // gone too soon
+      }
+      prev = new Map(w.gusts.map(x => [x, x.x]));
+      if (!still && cm === 1) {
+        const b = (blockedMid(w, LANES - 1) ? 1 : 0) + (blockedMid(w, LANES) ? 1 : 0);
+        if (w.word) { lullW += b; lullWn += 2; } else { lullO += b; lullOn += 2; }
+      }
+    }
+    if (natural && seen > 0) g11++;
+    // 11i: a difficulty key changes the wind's speed at once (from the very next tick), and a run from the boat
+    //      still reaches Him
     const dk = make(13600 + r);
-    press(dk, ['Digit1', 'Digit3'][r % 2], ['1', '3'][r % 2]);
+    const kd = r % 2 ? 2 : 0;
+    run(dk, 1 + 4 * rr());
+    press(dk, ['Digit1', 'Digit2', 'Digit3'][kd], ['1', '2', '3'][kd]);
+    const before = new Map(dk.gusts.map(x => [x, x.x]));
+    let atOnce = dk.t + STEP >= dk.calmUntil && dk.calmMul === 1;
+    dk.update(STEP);
+    for (const x of dk.gusts) {
+      if (!before.has(x)) continue;
+      if (Math.abs(x.x - before.get(x) - x.dir * CONFIG.LANE_SPEED[x.lane - 1] * CONFIG.DIFFICULTY[kd] * STEP) > 1e-6) atOnce = false;
+    }
     until(dk, x => !!x.word, 20);
     tapEvery(dk, 0.25, 9, 0.3 * rr());
-    if (dk.state === 'REACHED') i10++;
-    // j: + and - set when He speaks next: the next Word comes that many seconds after the last one began
+    if (atOnce && dk.state === 'REACHED') i11++;
+    // 11j: + and - set when He speaks next: that many seconds after the last Word began, wherever in the
+    //      interval the key is pressed
     const iv = make(13800 + r), opens = [];
     iv.on(type => { if (type === 'wordOpen') opens.push(iv.turnT); });
-    press(iv, 'Minus', '-');                                   // 10 -> 9 s
-    until(iv, () => opens.length >= 2, 30);
-    press(iv, 'Equal', '+'); press(iv, 'Equal', '+');          // 9 -> 11 s
-    until(iv, () => opens.length >= 3, 30);
-    if (opens.length === 3 && Math.abs(opens[1] - opens[0] - 9) < 2 * STEP && Math.abs(opens[2] - opens[1] - 11) < 2 * STEP) j10++;
+    until(iv, () => opens.length >= 1, 20);
+    const d1 = 2 + 5 * rr();
+    until(iv, x => x.turnT >= opens[0] + d1, 8);
+    press(iv, 'Equal', '+');                                   // 10 -> 11 s, d1 s after He spoke
+    until(iv, () => opens.length >= 2, 15);
+    const d2 = 2 + 5 * rr();
+    until(iv, x => x.turnT >= opens[1] + d2, 8);
+    press(iv, 'Minus', '-'); press(iv, 'Minus', '-');          // 11 -> 9 s
+    until(iv, () => opens.length >= 3, 15);
+    if (opens.length === 3 && Math.abs(opens[1] - opens[0] - 11) < 2 * STEP && Math.abs(opens[2] - opens[1] - 9) < 2 * STEP) j11++;
     if (r % 20 === 19) await yieldUI();
   }
-  check(10, '"Come": steps up while He speaks pass over the waves from anywhere to Jesus; stopping or stepping aside ends the run; no run without the Word; the wind flows as always',
-        a10 === 200 && k10 === 200 && b10 === 200 && c10 === 200 && d10 === 200 && e10 === 200 && ej10 <= 2 && g10 === 200 &&
-        h10 === 200 && i10 === 200 && j10 === 200,
-        'run from anywhere ' + a10 + '/200, slowest promised run ' + k10 + '/200, waves cannot touch him in a run (and can once he stops) ' + b10 +
-        '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 + '), stepping aside ends it ' + d10 + '/200, no run without the Word ' + e10 +
-        '/200 (through by tapping on his own: ' + ej10 + '), wind flows as always ' + g10 + '/200, waves fade around a run ' + h10 +
-        '/200, after a difficulty key ' + i10 + '/200, +/- set the next Word ' + j10 + '/200');
+  check(10, '"Come": tapping on while He speaks passes over the waves from anywhere to Jesus; stopping or stepping aside ends the run; no run without the Word or once it has gone',
+        a10 === 200 && k10 === 200 && f10 === 200 && b10 === 200 && c10 === 200 && c810 === 200 && d10 === 200 && e10 === 200 &&
+        ej10 <= 2 && e210 === 200 && es210 >= 180 && l10 === 200 && m10 === 200 && n10 === 200 && o10 === 200 && h10 === 200,
+        'run from anywhere ' + a10 + '/200, slowest promised run ' + k10 + '/200, firm presses ' + f10 + '/200, waves cannot touch him in a run (and can once he stops) ' + b10 +
+        '/200, stopping ends it ' + c10 + '/200 (then sank: ' + cs10 + '), also at the last lane ' + c810 + '/200, stepping aside ends it ' + d10 +
+        '/200, no run without the Word ' + e10 + '/200 (through by tapping on his own: ' + ej10 + '), nor once the bubble has gone ' + e210 +
+        '/200 (then sank: ' + es210 + '), past 0:00 a stop is "Time\'s up" ' + l10 + '/200, after a stop only waves that come later and show reach him ' + m10 +
+        '/200 (sank: ' + ms10 + '), the wave he stopped over goes on past him ' + n10 + '/200, also out of a walk ' + o10 + '/200, waves fade around a run ' + h10 + '/200');
+  const lullD = Math.abs(lullW / Math.max(1, lullWn) - lullO / Math.max(1, lullOn));
+  check(11, 'The wind flows as always: CONFIG speeds, in at one edge and out at the other, no lull while He speaks; difficulty keys act at once; +/- set the next Word',
+        g11 === 200 && lullD <= 0.08 && i11 === 200 && j11 === 200,
+        'wind flows as always ' + g11 + '/200; middle of lanes 7–8 blocked ' + pct(lullW, lullWn) + ' while He speaks, ' + pct(lullO, lullOn) +
+        ' otherwise; after a difficulty key ' + i11 + '/200; +/- set the next Word ' + j11 + '/200');
+
+  // 12: no gust ever forms out of nowhere, in any turn of the tests above
+  check(12, 'No gust ever forms out of nowhere (every turn of the tests above)', formedAll === 0, 'gusts formed out of nowhere: ' + formedAll);
 
   const pass = results.every(x => x.pass);
   log(pass ? 'ALL PASS' : 'SOME CHECKS FAILED', '(' + ((performance.now() - t0) / 1000).toFixed(1) + ' s)');
