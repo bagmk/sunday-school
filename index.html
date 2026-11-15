@@ -94,6 +94,30 @@
   .app.multi .btn.primary { background: rgba(255, 228, 180, .10); border-color: var(--gold-line); }
   .app.multi .btn:hover, .app.multi .btn:focus-visible { background: rgba(255, 228, 180, .18); }
   .app.multi .btn:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+  /* Lesson plans: a compact list under the app cards, same width as the two-card grid */
+  .lessons { margin-top: 56px; }
+  .lessons h2 { margin: 0; text-align: center; font-family: var(--serif); font-weight: 400; font-size: clamp(22px, 3.4vw, 30px); }
+  .lessons h2 .en { color: var(--muted); }
+  .lessons > p { margin: 10px 0 0; text-align: center; color: var(--muted); font-size: 15px; line-height: 1.55; }
+  .lesson-list {
+    list-style: none; margin: 24px auto 0; padding: 0; max-width: 882px;
+    border: 1px solid var(--line); border-radius: 22px; background: var(--card); overflow: hidden;
+  }
+  .lesson-list li + li { border-top: 1px solid var(--line); }
+  .lesson {
+    display: grid; grid-template-columns: 210px 1fr auto; gap: 4px 18px; align-items: baseline;
+    padding: 16px 22px; color: inherit; text-decoration: none; transition: background .18s;
+  }
+  .lesson:hover { background: var(--card-hover); }
+  .lesson:focus-visible { outline: 2px solid var(--gold); outline-offset: -3px; border-radius: 6px; }
+  .l-ref { font-family: var(--serif); font-size: 18px; color: var(--gold); }
+  .l-title { font-size: 17px; line-height: 1.4; }
+  .l-title .en { color: var(--muted); font-size: 14px; margin-left: 4px; }
+  .l-kind { font-size: 13px; color: var(--faint); white-space: nowrap; }
+  @media (max-width: 680px) {
+    .lesson { grid-template-columns: 1fr; padding: 14px 16px; }
+    .l-kind { white-space: normal; }
+  }
   footer { margin-top: 44px; text-align: center; color: var(--faint); font-size: 12.5px; line-height: 1.7; }
   footer p { margin: 0 0 6px; }
   @media (max-width: 420px) {
@@ -248,6 +272,43 @@
         </a>
       </li>
     </ul>
+
+    <section class="lessons" aria-labelledby="lessons-title">
+      <h2 id="lessons-title">수업 진행안 <span class="en">· Lesson plans</span></h2>
+      <p>본문 하나에 활동 하나. 진행 방법과 인쇄 자료가 GitHub에서 열려요.<br>One passage, one activity. Teacher's guides and printables open on GitHub.</p>
+      <ol class="lesson-list">
+        <li><a class="lesson" href="https://github.com/bagmk/sunday-school/tree/main/lessons/01-ezra-4-6-persuade-the-king">
+          <span class="l-ref">에스라 4–6장</span>
+          <span class="l-title">왕을 설득하라 <span class="en">Persuade the King</span></span>
+          <span class="l-kind">카드게임 · 20분</span>
+        </a></li>
+        <li><a class="lesson" href="https://github.com/bagmk/sunday-school/tree/main/lessons/02-nehemiah-9-board">
+          <span class="l-ref">느헤미야 9장</span>
+          <span class="l-title">스물네 조각 보드 <span class="en">The 24-Square Board</span></span>
+          <span class="l-kind">보드게임 · 20분</span>
+        </a></li>
+        <li><a class="lesson" href="https://github.com/bagmk/sunday-school/tree/main/lessons/03-ezra-nehemiah-breaking-news">
+          <span class="l-ref">에스라–느헤미야</span>
+          <span class="l-title">Breaking News <span class="en">기자 취재와 보도</span></span>
+          <span class="l-kind">취재 40분 · 발표 20분</span>
+        </a></li>
+        <li><a class="lesson" href="https://github.com/bagmk/sunday-school/tree/main/lessons/04-matthew-4-operation-zero">
+          <span class="l-ref">마태복음 3:17–4:11</span>
+          <span class="l-title">작전명: 제로 <span class="en">Operation Zero</span></span>
+          <span class="l-kind">역할극</span>
+        </a></li>
+        <li><a class="lesson" href="https://github.com/bagmk/sunday-school/tree/main/lessons/05-matthew-9-before-he-stood">
+          <span class="l-ref">마태복음 9:1–8</span>
+          <span class="l-title">그가 일어나기 전 <span class="en">Before He Stood</span></span>
+          <span class="l-kind">이야기 게임 · 약 20분</span>
+        </a></li>
+        <li><a class="lesson" href="https://github.com/bagmk/sunday-school/tree/main/lessons/06-matthew-14-fourth-watch">
+          <span class="l-ref">마태복음 14:22–33</span>
+          <span class="l-title">새벽 3시 <span class="en">The Fourth Watch</span></span>
+          <span class="l-kind">건너기 게임 · 20분</span>
+        </a></li>
+      </ol>
+    </section>
   </main>
 
   <footer>
@@ -267,9 +328,9 @@
       pick.classList.add('primary');
     });
   })();
-  // Arrow keys move between apps (handy with a presentation remote); Enter opens the focused app.
+  // Arrow keys move between apps, then lesson plans (handy with a presentation remote); Enter opens the focused one.
   (function () {
-    var apps = Array.prototype.slice.call(document.querySelectorAll('a.app, .app .cover'));
+    var apps = Array.prototype.slice.call(document.querySelectorAll('a.app, .app .cover, a.lesson'));
     document.addEventListener('keydown', function (e) {
       var i = apps.indexOf(document.activeElement);
       var step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1 : 0;
