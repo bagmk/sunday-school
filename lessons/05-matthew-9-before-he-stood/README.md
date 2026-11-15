@@ -1,6 +1,6 @@
 # "일어나라"보다 먼저 나온 말이 있다 — 마태복음 9:1~8
 
-그가 일어나기 전 · Before He Stood · 이야기 게임(웹) · 약 20분 · 반 전체가 TV 한 대로 · 설교 앞에 하는 활동
+그가 일어나기 전 · Before He Stood · 이야기 게임(웹) · 약 20분 · 반 전체가 TV 한 대로 · 설교 앞에 하는 활동 · 블로그 글: <https://salt-light.tistory.com/62>
 
 A bilingual story game on Matthew 9:1–8. The class plays three characters in turn on one TV, about five minutes each, before the sermon.
 
@@ -46,7 +46,7 @@ A bilingual story game on Matthew 9:1–8. The class plays three characters in t
 
 ![“싹둑! 혼자 만선. 여기서 이야기가 끊겼어요” 카드와 다시 고르기 버튼](images/03-snip.jpg)
 
-"오늘 바다는 내 차지네"를 고르면 요나는 혼자 고기를 잡으러 갑니다. 짧은 장면 뒤에 **「싹둑!」**이 찍히고 이야기가 끊겨요. 배는 가득 찼는데 그 자리에 없었던 겁니다. 「다시 고르기」를 누르면 그 선택으로 돌아갑니다.
+"오늘 바다는 내 차지네"를 고르면 요나는 혼자 고기를 잡으러 갑니다. 짧은 장면 뒤에 **「싹둑!」** 도장이 찍히고 이야기가 끊겨요. 배는 가득 찼는데 그 자리에 없었던 겁니다. 「다시 고르기」를 누르면 그 선택으로 돌아갑니다.
 
 "확인부터 하자"를 고르면 동료들이 "확인하다가 배 떠난다!" 하고 막습니다. 그 보기는 사라지고, 남은 보기에서 다시 골라요.
 

@@ -1,6 +1,6 @@
 # 시험은 "내 사랑하는 아들"이라는 말 바로 다음에 온다 — 마태복음 3:17~4:11
 
-Operation Zero · 작전명: 제로 · 역할극 · 학생 4~5명과 선생님 1명 · 설교 앞에 하는 활동
+Operation Zero · 작전명: 제로 · 역할극 · 학생 4~5명과 선생님 1명 · 설교 앞에 하는 활동 · 블로그 글: <https://salt-light.tistory.com/61>
 
 A role-play before the sermon on Matthew 4: students are a strategy team hired to make an unknown man recognized by the whole world. Then they find out who already pitched the same plan, and that the mission itself was wrong.
 

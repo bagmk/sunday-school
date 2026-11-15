@@ -1,6 +1,6 @@
 # 그 편지에는 '하나님'이 한 번도 나오지 않는다 — 에스라 4~6장
 
-카드게임 · 20분 · 학생 4명(2:2)과 선생님 1명 · 블로그 글: <https://salt-light.tistory.com/55>
+카드게임 · 20분 · 학생 4명(2:2)과 선생님 1명 · 블로그 글: <https://salt-light.tistory.com/58>
 
 A 20-minute card game on Ezra 4–6: two teams try to persuade a bored Persian king, and the cards that look strongest to church kids are the ones he throws away.
 

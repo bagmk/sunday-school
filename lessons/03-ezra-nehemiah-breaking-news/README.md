@@ -1,6 +1,6 @@
 # Breaking News: 에스라–느헤미야
 
-기자 취재와 보도 · 60분(취재 40분 + 발표 20분) · 학생 4명
+기자 취재와 보도 · 60분(취재 40분 + 발표 20분) · 학생 4명 · 블로그 글: <https://salt-light.tistory.com/60>
 
 A 60-minute wrap-up of Ezra–Nehemiah: each student becomes a reporter, investigates one of six topics for 40 minutes, and reports for 20 minutes with one claim and two verses as evidence.
 

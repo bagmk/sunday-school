@@ -1,6 +1,6 @@
 # 베드로는 물이 아니라 바람을 보고 빠졌다 — 마태복음 14:22~33
 
-새벽 3시 · The Fourth Watch · 건너기 게임(웹) · 20분 · 학생 4~5명과 선생님 1명 · 노트북과 프로젝터
+새벽 3시 · The Fourth Watch · 건너기 게임(웹) · 20분 · 학생 4~5명과 선생님 1명 · 노트북과 프로젝터 · 블로그 글: <https://salt-light.tistory.com/63>
 
 A Frogger-style game on Matthew 14:22–33 with a rule only the teacher knows: dodging the wind never gets Peter across, but stepping out when Jesus says "Come" does.
 

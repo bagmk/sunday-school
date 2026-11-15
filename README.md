@@ -10,14 +10,14 @@ Activities made for a youth Sunday-school class: one passage, one activity, most
 
 ## 수업 · Lessons
 
-| | 본문 · Passage | 수업 · Lesson | 형식 | 자료 |
-| --- | --- | --- | --- | --- |
-| 1 | 에스라 4–6장 · Ezra 4–6 | [왕을 설득하라](lessons/01-ezra-4-6-persuade-the-king/) | 카드게임 · 20분 | 카드 20장, 역할 카드, 정답표, 진행 시트 |
-| 2 | 느헤미야 9장 · Nehemiah 9 | [스물네 조각 보드](lessons/02-nehemiah-9-board/) | 보드게임 · 20분 | 24칸 보드, 카드 25장 |
-| 3 | 에스라–느헤미야 · Ezra–Nehemiah | [Breaking News](lessons/03-ezra-nehemiah-breaking-news/) | 기자 취재와 보도 · 60분 | 주제표, 빈 기자증 |
-| 4 | 마태복음 3:17–4:11 · Matthew 3:17–4:11 | [Operation Zero · 작전명: 제로](lessons/04-matthew-4-operation-zero/) | 역할극 | 브리핑 슬라이드, 학생 카드 8쪽 |
-| 5 | 마태복음 9:1–8 · Matthew 9:1–8 | [그가 일어나기 전 · Before He Stood](lessons/05-matthew-9-before-he-stood/) | 이야기 게임(웹) · 약 20분 | [게임](apps/before-he-stood/) |
-| 6 | 마태복음 14:22–33 · Matthew 14:22–33 | [새벽 3시 · The Fourth Watch](lessons/06-matthew-14-fourth-watch/) | 건너기 게임(웹) · 20분 | [게임](apps/fourth-watch/), 게임 뒤 슬라이드 |
+| | 본문 · Passage | 수업 · Lesson | 형식 | 자료 | 글 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 에스라 4–6장 · Ezra 4–6 | [왕을 설득하라](lessons/01-ezra-4-6-persuade-the-king/) | 카드게임 · 20분 | 카드 20장, 역할 카드, 정답표, 진행 시트 | [블로그](https://salt-light.tistory.com/58) |
+| 2 | 느헤미야 9장 · Nehemiah 9 | [스물네 조각 보드](lessons/02-nehemiah-9-board/) | 보드게임 · 20분 | 24칸 보드, 카드 25장 | [블로그](https://salt-light.tistory.com/59) |
+| 3 | 에스라–느헤미야 · Ezra–Nehemiah | [Breaking News](lessons/03-ezra-nehemiah-breaking-news/) | 기자 취재와 보도 · 60분 | 주제표, 빈 기자증 | [블로그](https://salt-light.tistory.com/60) |
+| 4 | 마태복음 3:17–4:11 · Matthew 3:17–4:11 | [Operation Zero · 작전명: 제로](lessons/04-matthew-4-operation-zero/) | 역할극 | 브리핑 슬라이드, 학생 카드 8쪽 | [블로그](https://salt-light.tistory.com/61) |
+| 5 | 마태복음 9:1–8 · Matthew 9:1–8 | [그가 일어나기 전 · Before He Stood](lessons/05-matthew-9-before-he-stood/) | 이야기 게임(웹) · 약 20분 | [게임](apps/before-he-stood/) | [블로그](https://salt-light.tistory.com/62) |
+| 6 | 마태복음 14:22–33 · Matthew 14:22–33 | [새벽 3시 · The Fourth Watch](lessons/06-matthew-14-fourth-watch/) | 건너기 게임(웹) · 20분 | [게임](apps/fourth-watch/), 게임 뒤 슬라이드 | [블로그](https://salt-light.tistory.com/63) |
 
 만든 순서대로예요. 1–3은 2026년 8–9월 에스라·느헤미야, 4–6은 10–11월 마태복음입니다.
 

@@ -1,6 +1,6 @@
 # 스물네 조각 중 열여섯이 하나님 차례였다 — 느헤미야 9장
 
-보드게임 · 20분 · 학생 4명과 선생님 1명 · 설교 뒤에 하는 활동
+보드게임 · 20분 · 학생 4명과 선생님 1명 · 설교 뒤에 하는 활동 · 블로그 글: <https://salt-light.tistory.com/59>
 
 A 20-minute board game on Nehemiah 9: students guess the color of each of 24 event cards before it is read, and the finished board shows how much of the prayer is God's patience.
 
