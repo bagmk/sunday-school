@@ -1,0 +1,932 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<meta name="robots" content="noindex">
+<meta name="format-detection" content="telephone=no">
+<title>jiho.draws · follo</title>
+<style>
+  /* A made-up social app ("follo") and a made-up artist, for a Sunday-school class.
+     One file: the profile, one post, and comments. Comments sync between devices through a
+     Firebase Realtime Database when it can be reached; otherwise they stay on this device. */
+  :root {
+    --bg: #f3f3f6;
+    --card: #ffffff;
+    --line: #e4e4ea;
+    --text: #17171c;
+    --muted: #666672;
+    --faint: #8d8d99;
+    --soft: #efeff4;
+    --accent: #4f46e5;
+    --like: #ee3d57;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", sans-serif;
+    --round: ui-rounded, "SF Pro Rounded", "Arial Rounded MT Bold", "Nunito", var(--sans);
+    --emoji: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+    --bar: 3.4rem;
+  }
+  * { box-sizing: border-box; }
+  html { font-size: 16px; -webkit-text-size-adjust: 100%; background: var(--bg); }
+  body {
+    margin: 0; color: var(--text); background: var(--bg);
+    font-family: var(--sans); line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    word-break: keep-all; overflow-wrap: break-word; overflow-wrap: anywhere;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; padding: 0; margin: 0; cursor: pointer; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  p, ul { margin: 0; padding: 0; }
+  ul { list-style: none; }
+  [hidden] { display: none !important; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+  /* Top bar */
+  .bar {
+    position: sticky; top: 0; z-index: 20; height: var(--bar);
+    background: rgba(255, 255, 255, .94); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+    display: flex; justify-content: center;
+  }
+  .bar-in { width: min(100%, 72rem); padding: 0 1rem; display: flex; align-items: center; justify-content: space-between; }
+  .logo { font-family: var(--round); font-weight: 800; font-size: 1.6rem; letter-spacing: -.045em; display: inline-flex; align-items: baseline; gap: .12em; }
+  .logo i { width: .34em; height: .34em; border-radius: 50%; background: var(--accent); display: inline-block; }
+  .bar .me { display: inline-flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .8rem; }
+  .net { display: inline-flex; align-items: center; gap: .32rem; margin-right: .35rem; font-size: .72rem; color: var(--faint); }
+  .net i { width: .5rem; height: .5rem; border-radius: 50%; background: #c3c3cd; }
+  .net.on { color: #1c8a4b; }
+  .net.on i { background: #22b35e; box-shadow: 0 0 0 3px rgba(34, 179, 94, .18); }
+
+  /* Avatars */
+  .avatar { flex: none; display: inline-grid; place-items: center; border-radius: 50%; overflow: hidden; background: var(--soft); }
+  .avatar svg { display: block; width: 100%; height: 100%; }
+  .avatar.sm { width: 2.15rem; height: 2.15rem; }
+  .avatar.xl { width: 5.2rem; height: 5.2rem; box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--accent); margin: 5px; }
+  .avatar.animal { font-family: var(--emoji); font-size: 1.22rem; line-height: 1; }
+  .avatar.letter { font-weight: 800; font-size: .9rem; color: rgba(0, 0, 0, .62); }
+  .badge { width: 1.05em; height: 1.05em; flex: none; vertical-align: -.16em; }
+
+  /* Layout: one column on phones */
+  .wrap { min-height: calc(100vh - var(--bar)); }
+  .card {
+    display: grid; grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "profile" "phead" "media" "actions" "thread" "composer";
+    align-content: start;
+    max-width: 34rem; margin: 0 auto; background: var(--card);
+    min-height: calc(100vh - var(--bar));
+  }
+  .left, .right, .right-in { display: contents; }
+  .profile { grid-area: profile; }
+  .phead { grid-area: phead; }
+  .media { grid-area: media; }
+  .actions { grid-area: actions; }
+  .thread { grid-area: thread; }
+  .composer { grid-area: composer; }
+
+  /* Profile */
+  .profile { padding: 1rem 1rem .95rem; border-bottom: 1px solid var(--line); }
+  .p-top { display: flex; align-items: center; gap: 1.1rem; }
+  .stats { flex: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); text-align: center; }
+  .stats b { display: block; font-size: 1.12rem; line-height: 1.25; }
+  .stats span { font-size: .8rem; color: var(--muted); }
+  .p-name { margin-top: .7rem; font-weight: 700; display: flex; flex-wrap: wrap; align-items: center; gap: 0 .3rem; }
+  .p-handle { color: var(--muted); font-weight: 500; font-size: .9rem; }
+  .p-bio { margin-top: .15rem; font-size: .92rem; }
+  .p-btns { margin-top: .8rem; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
+  .btn { height: 2.3rem; border-radius: .65rem; background: var(--soft); font-weight: 700; font-size: .92rem; }
+  .btn:active { transform: scale(.98); }
+  .btn.primary { background: var(--accent); color: #fff; }
+  .btn.primary.on { background: var(--soft); color: var(--text); }
+
+  /* Post header */
+  .phead { position: relative; display: flex; align-items: center; gap: .6rem; padding: .6rem .9rem; }
+  .ph-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: .3rem; font-size: .95rem; }
+  .ph-name .muted { color: var(--muted); font-weight: 400; }
+  .more { width: 2.4rem; height: 2.4rem; border-radius: 50%; display: grid; place-items: center; }
+  .more:hover { background: var(--soft); }
+  .more svg { width: 1.3rem; height: 1.3rem; }
+  .menu {
+    position: absolute; right: .7rem; top: 3rem; z-index: 15; width: min(19rem, calc(100vw - 1.4rem));
+    background: #fff; border: 1px solid var(--line); border-radius: .9rem; box-shadow: 0 12px 34px rgba(20, 20, 40, .18);
+    padding: .4rem;
+  }
+  .menu button { display: block; width: 100%; text-align: left; padding: .7rem .75rem; border-radius: .6rem; font-size: .92rem; font-weight: 600; }
+  .menu button:hover { background: var(--soft); }
+  .menu button.warn { color: #c0182f; }
+  .menu p { padding: .55rem .75rem .5rem; font-size: .78rem; color: var(--muted); border-top: 1px solid var(--line); margin-top: .3rem; }
+
+  /* Picture (square) */
+  .media { position: relative; background: #1f2350; overflow: hidden; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  .media::before { content: ""; display: block; padding-top: 100%; }
+  .media > .art { position: absolute; left: 0; top: 0; display: block; width: 100%; height: 100%; }
+  .pop { position: absolute; left: 50%; top: 50%; width: 30%; transform: translate(-50%, -50%) scale(0); opacity: 0; pointer-events: none; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, .35)); }
+  .pop.go { animation: pop .8s ease-out; }
+  @keyframes pop {
+    0% { transform: translate(-50%, -50%) scale(0); opacity: 0; }
+    18% { transform: translate(-50%, -50%) scale(1.15); opacity: 1; }
+    34% { transform: translate(-50%, -50%) scale(.95); opacity: 1; }
+    70% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+    100% { transform: translate(-50%, -50%) scale(1); opacity: 0; }
+  }
+
+  /* Like / comment / share */
+  .actions { padding: .45rem .9rem .15rem; }
+  .a-row { display: flex; align-items: center; gap: .35rem; margin-left: -.45rem; }
+  .a-row button { width: 2.6rem; height: 2.6rem; border-radius: 50%; display: grid; place-items: center; }
+  .a-row button:hover { background: var(--soft); }
+  .a-row button:active { transform: scale(.9); }
+  .a-row svg { width: 1.65rem; height: 1.65rem; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+  .a-row .grow { flex: 1; }
+  #like[aria-pressed="true"] { color: var(--like); }
+  #like[aria-pressed="true"] svg { fill: var(--like); stroke: var(--like); }
+  #savep[aria-pressed="true"] svg { fill: currentColor; }
+  .likes { font-size: .95rem; padding: .05rem 0 .3rem; }
+
+  /* Caption and comments */
+  .thread { padding: .25rem .9rem 1rem; }
+  .cap, .c { display: flex; gap: .65rem; align-items: flex-start; }
+  .cap { padding: .35rem 0 .6rem; }
+  .cap p, .c p { font-size: .96rem; }
+  .cap .en, .c .en { color: var(--muted); margin-top: .2rem; }
+  .meta { margin-top: .22rem; display: flex; gap: .8rem; align-items: center; font-size: .78rem !important; color: var(--faint); }
+  .meta button { font-size: inherit; font-weight: 600; color: var(--faint); padding: .15rem 0; }
+  .meta button:hover { color: var(--text); }
+  .viewall { display: block; padding: .35rem 0 .55rem; color: var(--muted); font-size: .92rem; }
+  .viewall:hover { color: var(--text); }
+  .clist { display: grid; gap: .95rem; }
+  #top { padding: .2rem 0 1rem; margin-bottom: 1rem; border-bottom: 1px solid var(--line); }
+  .c-body { flex: 1; min-width: 0; }
+  .c-like { flex: none; width: 2rem; height: 2rem; margin-top: .05rem; border-radius: 50%; display: grid; place-items: center; color: var(--faint); }
+  .c-like svg { width: .95rem; height: .95rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .c-like[aria-pressed="true"] { color: var(--like); }
+  .c-like[aria-pressed="true"] svg { fill: var(--like); }
+  .c { scroll-margin: 1rem 0 10.5rem; } /* a new comment scrolls clear of the writing bar stuck to the bottom */
+  .c.new { animation: slide .35s ease-out; }
+  @keyframes slide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  /* Write a comment */
+  .composer {
+    position: sticky; bottom: 0; z-index: 10; background: var(--card); border-top: 1px solid var(--line);
+    padding: .5rem .8rem calc(.6rem + env(safe-area-inset-bottom));
+  }
+  .who-line { display: flex; justify-content: space-between; align-items: baseline; gap: .6rem; font-size: .78rem; color: var(--muted); padding: 0 .1rem .35rem; }
+  .who-line b { color: var(--text); }
+  .who { display: flex; gap: .4rem; overflow-x: auto; padding: 3px 3px .5rem; scrollbar-width: none; }
+  .who::-webkit-scrollbar { display: none; }
+  .who button { flex: none; border-radius: 50%; opacity: .55; transition: opacity .15s, transform .15s; }
+  .who button:hover { opacity: .85; }
+  .who button[aria-checked="true"] { opacity: 1; box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent); transform: scale(1.04); }
+  .write { display: flex; align-items: center; gap: .55rem; }
+  .write input {
+    flex: 1; min-width: 0; height: 2.6rem; border: 1px solid var(--line); border-radius: 1.3rem; padding: 0 1rem;
+    font: inherit; font-size: 1rem; color: var(--text); background: #fafafc;
+  }
+  .write input::placeholder { color: var(--faint); }
+  .write button { flex: none; height: 2.6rem; padding: 0 .5rem; color: var(--accent); font-weight: 800; }
+  .write button:disabled { opacity: .35; cursor: default; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 9.5rem; z-index: 40; transform: translateX(-50%);
+    max-width: calc(100vw - 2rem); padding: .6rem 1rem; border-radius: 999px;
+    background: rgba(23, 23, 28, .92); color: #fff; font-size: .88rem; text-align: center;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .toast.on { opacity: 1; }
+  .note { max-width: 34rem; margin: 0 auto; padding: .9rem 1rem 1.3rem; color: var(--faint); font-size: .72rem; text-align: center; }
+
+  /* Computers and TVs: picture on the left, comments on the right, sized to fit the screen */
+  @media (min-width: 960px) and (min-height: 680px) {
+    html { font-size: clamp(15px, 1.15vw, 22px); }
+    .wrap { display: grid; place-items: center; align-content: center; padding: 1.1rem 1rem .4rem; }
+    .card {
+      --media: min(38rem, calc(100vh - 18rem), calc(100vw - 30rem));
+      grid-template-columns: var(--media) 26rem; grid-template-areas: none;
+      max-width: none; width: -moz-fit-content; width: fit-content; min-height: 0;
+      border: 1px solid var(--line); border-radius: 1.1rem; overflow: hidden;
+      box-shadow: 0 12px 44px rgba(20, 20, 40, .09);
+    }
+    .left { display: flex; flex-direction: column; width: var(--media); border-right: 1px solid var(--line); }
+    .right { display: block; position: relative; }
+    .right-in { display: flex; flex-direction: column; position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+    .profile, .phead, .media, .actions, .thread, .composer { grid-area: auto; }
+    /* The profile becomes one compact strip: picture, name and numbers, buttons */
+    .profile {
+      border-bottom: 0; padding: .8rem 1.1rem;
+      display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 1rem; align-items: center;
+      grid-template-areas: "av name btns" "av stats btns" "av bio btns";
+    }
+    .p-top { display: contents; }
+    .profile .avatar.xl { grid-area: av; width: 4.3rem; height: 4.3rem; }
+    .p-name { grid-area: name; margin-top: 0; }
+    .stats { grid-area: stats; display: flex; flex-wrap: wrap; gap: 0 .9rem; text-align: left; }
+    .stats li { display: flex; align-items: baseline; gap: .3rem; }
+    .stats b { display: inline; font-size: .92rem; }
+    .p-bio { grid-area: bio; margin-top: .1rem; font-size: .86rem; color: var(--muted); }
+    .p-btns { grid-area: btns; margin-top: 0; grid-template-columns: minmax(6.6rem, auto); }
+    .btn { height: 2.1rem; padding: 0 1rem; }
+    .media { width: var(--media); height: var(--media); }
+    .media::before { display: none; }
+    .c { scroll-margin: 1rem 0; }
+    .phead { flex: none; border-bottom: 1px solid var(--line); padding: .7rem .9rem; }
+    .thread { flex: 1; min-height: 0; overflow-y: auto; padding-top: .7rem; overscroll-behavior: contain; }
+    .actions { flex: none; border-top: 1px solid var(--line); }
+    .composer { flex: none; position: static; padding-bottom: .7rem; }
+    .toast { bottom: 2rem; }
+    .note { max-width: none; padding-top: .7rem; }
+  }
+  @media (min-width: 960px) and (min-height: 680px) and (max-height: 779px) {
+    .p-bio { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pop.go, .c.new { animation: none; }
+    .who button, .toast { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Shared drawings: the artist's profile picture and the small icons -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="jiho-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffbe8f"/><stop offset=".5" stop-color="#ee7aa5"/><stop offset="1" stop-color="#6f62ea"/>
+    </linearGradient>
+    <symbol id="av-jiho" viewBox="0 0 100 100">
+      <rect width="100" height="100" fill="url(#jiho-g)"/>
+      <ellipse cx="30" cy="22" rx="34" ry="20" fill="#fff" opacity=".16"/>
+      <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M29 49 q7 -9 14 0"/>
+        <path d="M57 49 q7 -9 14 0"/>
+        <path d="M38 63 q12 11 24 0"/>
+        <path d="M50 27 v-9 q7 -9 15 -3"/>
+      </g>
+      <circle cx="25" cy="62" r="5" fill="#fff" opacity=".4"/>
+      <circle cx="75" cy="62" r="5" fill="#fff" opacity=".4"/>
+    </symbol>
+    <symbol id="i-badge" viewBox="0 0 24 24">
+      <path fill="#4f46e5" d="M12 1.6l2.4 1.9 3-.4 1.2 2.8 2.8 1.2-.4 3 1.9 2.4-1.9 2.4.4 3-2.8 1.2-1.2 2.8-3-.4L12 23.4l-2.4-1.9-3 .4-1.2-2.8-2.8-1.2.4-3L1.1 12.5 3 10.1l-.4-3 2.8-1.2 1.2-2.8 3 .4z"/>
+      <path fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M7.8 12.6l2.9 2.9 5.5-5.9"/>
+    </symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24">
+      <path d="M12 20.7s-7.3-4.4-9.2-9C1.3 8 3.6 4.5 7.1 4.5c1.9 0 3.6 1 4.9 2.8 1.3-1.8 3-2.8 4.9-2.8 3.500 0 5.800 3.500 4.300 7.200-1.900 4.600-9.200 9-9.200 9z"/>
+    </symbol>
+    <symbol id="i-bubble" viewBox="0 0 24 24">
+      <path d="M20.5 11.7a8.3 8.3 0 0 1-12.2 7.3L3.5 20.5l1.5-4.6a8.3 8.3 0 1 1 15.500-4.200z"/>
+    </symbol>
+    <symbol id="i-share" viewBox="0 0 24 24">
+      <path d="M12 15V4m0 0l-4 4m4-4l4 4M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5"/>
+    </symbol>
+    <symbol id="i-save" viewBox="0 0 24 24">
+      <path d="M6.5 4h11a1 1 0 0 1 1 1v15l-6.500-4.600L5.5 20V5a1 1 0 0 1 1-1z"/>
+    </symbol>
+  </defs>
+</svg>
+
+<header class="bar">
+  <div class="bar-in">
+    <span class="logo" aria-label="follo">follo<i></i></span>
+    <span class="me">
+      <span class="net" id="net" hidden><i></i><span id="netText">offline</span></span>
+      <span id="barName">토끼</span><span class="avatar sm animal" id="barAv" aria-hidden="true"></span>
+    </span>
+  </div>
+</header>
+
+<div class="wrap">
+<main class="card">
+
+  <div class="left">
+    <section class="profile" aria-label="Profile">
+      <div class="p-top">
+        <span class="avatar xl"><svg aria-hidden="true"><use href="#av-jiho"/></svg></span>
+        <ul class="stats">
+          <li><b>1,096</b><span>posts</span></li>
+          <li><b id="followers">50K</b><span>followers</span></li>
+          <li><b>148</b><span>following</span></li>
+        </ul>
+      </div>
+      <p class="p-name">지호 JIHO <svg class="badge" role="img" aria-label="Verified"><use href="#i-badge"/></svg> <span class="p-handle">@jiho.draws</span></p>
+      <p class="p-bio">그림 그리는 사람 · illustrator<br>매일 한 장, 3년째 · one drawing a day since 2023</p>
+      <div class="p-btns">
+        <button type="button" class="btn primary" id="follow" aria-pressed="false">Follow</button>
+        <button type="button" class="btn" id="msg">Message</button>
+      </div>
+    </section>
+
+    <div class="media" id="media">
+      <svg class="art" viewBox="0 0 600 600" role="img" aria-label="지호의 마지막 그림: 빛을 향해 올라가는 긴 계단 앞에 선 사람 · Jiho's last drawing: a small figure at the foot of a long stairway rising toward a light">
+        <defs>
+          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#1c2150"/><stop offset=".34" stop-color="#55408c"/><stop offset=".66" stop-color="#dc6f8e"/><stop offset="1" stop-color="#ffc48c"/>
+          </linearGradient>
+          <radialGradient id="glow" cx="300" cy="262" r="250" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#fff8dc"/><stop offset=".22" stop-color="#ffeeb0" stop-opacity=".85"/><stop offset=".55" stop-color="#ffd69a" stop-opacity=".28"/><stop offset="1" stop-color="#ffd69a" stop-opacity="0"/>
+          </radialGradient>
+          <linearGradient id="door" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#fff0bf"/>
+          </linearGradient>
+        </defs>
+        <rect width="600" height="600" fill="url(#sky)"/>
+        <g fill="#fff">
+          <circle cx="62" cy="118" r="1.8" opacity=".8"/><circle cx="128" cy="64" r="1.3" opacity=".7"/><circle cx="196" cy="140" r="1.5" opacity=".6"/>
+          <circle cx="92" cy="208" r="1.2" opacity=".5"/><circle cx="412" cy="58" r="1.6" opacity=".8"/><circle cx="486" cy="128" r="1.3" opacity=".7"/>
+          <circle cx="548" cy="72" r="1.9" opacity=".8"/><circle cx="522" cy="216" r="1.2" opacity=".5"/><circle cx="352" cy="104" r="1.1" opacity=".6"/>
+          <circle cx="246" cy="48" r="1.4" opacity=".7"/>
+        </g>
+        <ellipse cx="118" cy="330" rx="150" ry="20" fill="#fff" opacity=".1"/>
+        <ellipse cx="500" cy="376" rx="170" ry="24" fill="#fff" opacity=".1"/>
+        <circle cx="300" cy="262" r="250" fill="url(#glow)"/>
+        <path d="M279 304 V246 a21 21 0 0 1 42 0 V304 Z" fill="url(#door)"/>
+        <rect x="74.0" y="558.0" width="452.0" height="42.6" fill="#27224f"/>
+        <rect x="74.0" y="558.0" width="452.0" height="10.1" fill="#5f5b7d"/>
+        <rect x="102.9" y="521.4" width="394.1" height="37.2" fill="#2c2751"/>
+        <rect x="102.9" y="521.4" width="394.1" height="8.8" fill="#635f7e"/>
+        <rect x="128.2" y="489.4" width="343.7" height="32.5" fill="#342e54"/>
+        <rect x="128.2" y="489.4" width="343.7" height="7.7" fill="#696480"/>
+        <rect x="150.1" y="461.6" width="299.7" height="28.4" fill="#3e3658"/>
+        <rect x="150.1" y="461.6" width="299.7" height="6.7" fill="#706a83"/>
+        <rect x="169.3" y="437.3" width="261.3" height="24.9" fill="#48405d"/>
+        <rect x="169.3" y="437.3" width="261.3" height="5.8" fill="#787287"/>
+        <rect x="186.1" y="416.1" width="227.9" height="21.8" fill="#544a62"/>
+        <rect x="186.1" y="416.1" width="227.9" height="5.1" fill="#80798b"/>
+        <rect x="200.6" y="397.7" width="198.7" height="19.1" fill="#605567"/>
+        <rect x="200.6" y="397.7" width="198.7" height="4.4" fill="#89818f"/>
+        <rect x="213.4" y="381.6" width="173.3" height="16.7" fill="#6e616c"/>
+        <rect x="213.4" y="381.6" width="173.3" height="3.9" fill="#948a92"/>
+        <rect x="224.4" y="367.5" width="151.1" height="14.6" fill="#7c6d72"/>
+        <rect x="224.4" y="367.5" width="151.1" height="3.4" fill="#9e9397"/>
+        <rect x="234.1" y="355.3" width="131.8" height="12.8" fill="#8a7a78"/>
+        <rect x="234.1" y="355.3" width="131.8" height="2.9" fill="#a89d9b"/>
+        <rect x="242.6" y="344.6" width="114.9" height="11.3" fill="#9a887e"/>
+        <rect x="242.6" y="344.6" width="114.9" height="2.6" fill="#b4a7a0"/>
+        <rect x="249.9" y="335.3" width="100.2" height="9.9" fill="#a99685"/>
+        <rect x="249.9" y="335.3" width="100.2" height="2.2" fill="#bfb1a5"/>
+        <rect x="256.3" y="327.2" width="87.4" height="8.7" fill="#b9a48b"/>
+        <rect x="256.3" y="327.2" width="87.4" height="1.9" fill="#cbbca9"/>
+        <rect x="261.9" y="320.1" width="76.2" height="7.7" fill="#cab392"/>
+        <rect x="261.9" y="320.1" width="76.2" height="1.7" fill="#d8c7ae"/>
+        <rect x="266.8" y="313.9" width="66.4" height="6.8" fill="#dbc299"/>
+        <rect x="266.8" y="313.9" width="66.4" height="1.5" fill="#e4d2b4"/>
+        <rect x="271.0" y="308.5" width="57.9" height="6.0" fill="#edd2a1"/>
+        <rect x="271.0" y="308.5" width="57.9" height="1.3" fill="#f2deb9"/>
+        <rect x="274.7" y="303.9" width="50.5" height="5.3" fill="#ffe2a8"/>
+        <rect x="274.7" y="303.9" width="50.5" height="1.2" fill="#ffeabf"/>
+        <g fill="#15123a">
+          <circle cx="300" cy="476" r="8.5"/>
+          <path d="M291 489 h18 a4 4 0 0 1 4 4 l2.5 28.5 h-31 l2.5 -28.5 a4 4 0 0 1 4 -4 z"/>
+        </g>
+        <text x="30" y="56" fill="#fff" font-family="system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif" font-size="27" font-weight="700">마지막 그림</text>
+        <text x="31" y="80" fill="#fff" opacity=".82" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" letter-spacing="2.4">LAST DRAWING · NO. 1096</text>
+        <text x="570" y="586" fill="#fff" opacity=".9" text-anchor="end" font-family="ui-rounded, 'Arial Rounded MT Bold', system-ui, sans-serif" font-size="15" font-weight="700">jiho.</text>
+      </svg>
+      <svg class="pop" id="pop" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-heart" fill="#fff"/></svg>
+    </div>
+  </div>
+
+  <div class="right"><div class="right-in">
+
+    <header class="phead">
+      <span class="avatar sm"><svg aria-hidden="true"><use href="#av-jiho"/></svg></span>
+      <p class="ph-name"><b>jiho.draws</b> <svg class="badge" role="img" aria-label="Verified"><use href="#i-badge"/></svg> <span class="muted">· 2h</span></p>
+      <button type="button" class="more" id="more" aria-haspopup="true" aria-expanded="false" aria-controls="menu" aria-label="More · 더 보기">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
+      </button>
+      <div class="menu" id="menu" hidden>
+        <button type="button" id="copy">링크 복사 · Copy link</button>
+        <button type="button" class="warn" id="clear">댓글 모두 지우기 · Clear comments</button>
+        <p>수업용으로 만든 가상의 화면이에요.<br>A fictional screen made for a class.</p>
+      </div>
+    </header>
+
+    <div class="thread" id="thread">
+      <div class="cap">
+        <span class="avatar sm"><svg aria-hidden="true"><use href="#av-jiho"/></svg></span>
+        <div class="c-body">
+          <p><b>jiho.draws</b> 3년 동안 고마웠어요. 요즘 내 마음이 온통 여기 가 있어요. 하나님이 내려놓으라고 하시는 것 같아요. 그래서 이 계정을 지우려고 해요.</p>
+          <p class="en">Thank you for these three years. Lately my whole heart has been in this account. I think God is telling me to let it go. So I’m going to delete it.</p>
+          <p class="meta"><span>2h</span></p>
+        </div>
+      </div>
+      <button type="button" class="viewall" id="viewall" aria-expanded="false" aria-controls="top">View all 2,104 comments</button>
+      <ul class="clist" id="top" hidden></ul>
+      <ul class="clist" id="list" aria-live="polite"></ul>
+    </div>
+
+    <div class="actions">
+      <div class="a-row">
+        <button type="button" id="like" aria-pressed="false" aria-label="Like · 좋아요"><svg aria-hidden="true"><use href="#i-heart"/></svg></button>
+        <button type="button" id="tocomment" aria-label="Comment · 댓글 달기"><svg aria-hidden="true"><use href="#i-bubble"/></svg></button>
+        <button type="button" id="share" aria-label="Share · 공유"><svg aria-hidden="true"><use href="#i-share"/></svg></button>
+        <span class="grow"></span>
+        <button type="button" id="savep" aria-pressed="false" aria-label="Save · 저장"><svg aria-hidden="true"><use href="#i-save"/></svg></button>
+      </div>
+      <p class="likes"><b id="likes">12,483</b> likes</p>
+    </div>
+
+    <div class="composer">
+      <p class="who-line"><span>Comment as <b id="whoName">토끼</b></span><span>눌러서 바꾸기 · tap to switch</span></p>
+      <div class="who" id="who" role="radiogroup" aria-label="Comment as · 댓글 다는 사람"></div>
+      <form class="write" id="form" autocomplete="off">
+        <label class="sr" for="input">Add a comment · 댓글 달기</label>
+        <input id="input" type="text" maxlength="200" placeholder="Add a comment…" enterkeyhint="send" autocapitalize="sentences">
+        <button type="submit" id="post" disabled>Post</button>
+      </form>
+    </div>
+
+  </div></div>
+
+</main>
+<p class="note">수업용으로 만든 가상의 화면이에요. 앱과 인물은 실제가 아니에요. · A fictional screen made for a class. The app and the person are not real.</p>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // Eight anonymous classroom profiles. No sign-up: tap a face, write, post.
+  var ANIMALS = [
+    { name: '토끼',   en: 'rabbit',  face: '🐰', bg: '#ffe1ea' },
+    { name: '거북이', en: 'turtle',  face: '🐢', bg: '#d9f2dc' },
+    { name: '여우',   en: 'fox',     face: '🦊', bg: '#ffe3c9' },
+    { name: '곰',     en: 'bear',    face: '🐻', bg: '#ead9c8' },
+    { name: '고양이', en: 'cat',     face: '🐱', bg: '#fff1b8' },
+    { name: '강아지', en: 'puppy',   face: '🐶', bg: '#e2e6ff' },
+    { name: '펭귄',   en: 'penguin', face: '🐧', bg: '#d8eefc' },
+    { name: '부엉이', en: 'owl',     face: '🦉', bg: '#eadcf8' }
+  ];
+
+  // Comments that were "already there" from made-up followers; shown when "View all comments" is tapped.
+  var TOP = [
+    { user: 'fan_since_day1', bg: '#ffd9c2', ko: '지우지 마요! 3년이 아깝잖아요.', en: 'Don’t delete it! Three years of work, just gone?', time: '1h', likes: 482 },
+    { user: 'church_friend', bg: '#cfe6ff', ko: '그 계정으로 하나님 일을 하면 되잖아요. 그게 더 낫죠.', en: 'Just use the account for God instead. Isn’t that better?', time: '58m', likes: 317 },
+    { user: 'art_lover', bg: '#dff3c8', ko: '잠깐 쉬었다가 돌아와요. 지울 것까지는 없어요.', en: 'Take a break and come back. You don’t have to delete it.', time: '41m', likes: 265 },
+    { user: 'praying4u', bg: '#f3dcf7', ko: '하나님이 말씀하셨으면 그대로 해요. 기도할게요.', en: 'If God said it, do it. I’m praying for you.', time: '12m', likes: 38 }
+  ];
+
+  var KEY = 'the-last-post.v1';
+  var BASE_LIKES = 12483, BASE_COMMENTS = 2104, MAX_LEN = 200, MAX_KEEP = 200;
+
+  // ----- Where comments are shared -----
+  // A Firebase Realtime Database, used through its plain REST address (no sign-in, no SDK). Its rules
+  // only allow reading the list, adding a comment and deleting one. If it cannot be reached, the page
+  // keeps working on this one device and catches up when the connection returns.
+  //   ?db=off            this device only
+  //   ?db=https://...    another Realtime Database address
+  //   ?teacher=1         this device may delete any comment and clear them all (remembered; ?teacher=0 turns it off)
+  var DB_DEFAULT = 'https://sunday-school-1ee25-default-rtdb.firebaseio.com';
+  function param(name) {
+    var m = new RegExp('[?&]' + name + '=([^&#]*)').exec(window.location.search);
+    try { return m ? decodeURIComponent(m[1]) : null; } catch (e) { return null; }
+  }
+  function pickDb() {
+    var p = param('db');
+    if (p === 'off') return '';
+    var ok = /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)?\.(firebaseio\.com|firebasedatabase\.app)\/?$/i.test(p || '') ||
+             /^http:\/\/(127\.0\.0\.1|localhost):\d+\/?$/.test(p || '');
+    return (ok ? p : DB_DEFAULT).replace(/\/+$/, '');
+  }
+  var DB = pickDb();
+  var ROOM = DB ? DB + '/lastpost/comments' : '';
+
+  var teacher = false;
+  try {
+    var tp = param('teacher');
+    if (tp === '1') window.localStorage.setItem(KEY + '.teacher', '1');
+    if (tp === '0') window.localStorage.removeItem(KEY + '.teacher');
+    teacher = window.localStorage.getItem(KEY + '.teacher') === '1';
+  } catch (e) { teacher = param('teacher') === '1'; }
+
+  // comments: { id, key, who, text, t }. key is the shared id once the comment has reached the database
+  // ('' until then); id equals key when there is one. mine / likedC remember this device's own marks.
+  var state = {
+    me: Math.floor(Math.random() * ANIMALS.length), picked: false, comments: [],
+    liked: false, saved: false, following: false, top: false, topLiked: {}, mine: {}, likedC: {}
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+  function fmt(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+  function coarse() { return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches); }
+  function validComment(c) {
+    return !!c && typeof c.text === 'string' && c.text.length > 0 && typeof c.who === 'number' && !!ANIMALS[c.who];
+  }
+
+  // Storage can be missing or blocked (private mode, file pages on some browsers): then things live until the page closes.
+  function load() {
+    try {
+      var s = JSON.parse(window.localStorage.getItem(KEY) || 'null');
+      if (!s || typeof s !== 'object') return;
+      if (typeof s.me === 'number' && ANIMALS[Math.floor(s.me)]) state.me = Math.floor(s.me);
+      state.picked = !!s.picked;
+      if (Array.isArray(s.comments)) {
+        state.comments = s.comments.filter(validComment).slice(-MAX_KEEP).map(function (c) {
+          return { id: String(c.id), key: typeof c.key === 'string' ? c.key : '', who: c.who, text: c.text.slice(0, MAX_LEN), t: Number(c.t) || Date.now() };
+        });
+      }
+      state.liked = !!s.liked; state.saved = !!s.saved; state.following = !!s.following; state.top = !!s.top;
+      ['topLiked', 'mine', 'likedC'].forEach(function (k) {
+        if (s[k] && typeof s[k] === 'object') Object.keys(s[k]).slice(0, 600).forEach(function (id) { if (s[k][id]) state[k][id] = true; });
+      });
+    } catch (e) { /* start fresh */ }
+  }
+  function save() {
+    try {
+      var copy = {};
+      Object.keys(state).forEach(function (k) { copy[k] = state[k]; });
+      copy.comments = state.comments.map(function (c) { return { id: c.id, key: c.key, who: c.who, text: c.text, t: c.t }; });
+      window.localStorage.setItem(KEY, JSON.stringify(copy));
+    } catch (e) { /* keep going in memory */ }
+  }
+
+  function ago(t) {
+    var s = Math.max(0, Math.floor((Date.now() - t) / 1000));
+    if (s < 60) return 'now';
+    if (s < 3600) return Math.floor(s / 60) + 'm';
+    if (s < 86400) return Math.floor(s / 3600) + 'h';
+    return Math.floor(s / 86400) + 'd';
+  }
+
+  function animalAvatar(i) {
+    var a = el('span', 'avatar sm animal', ANIMALS[i].face);
+    a.style.background = ANIMALS[i].bg;
+    a.setAttribute('aria-hidden', 'true');
+    return a;
+  }
+  function heartButton(pressed, label) {
+    var b = el('button', 'c-like');
+    b.type = 'button';
+    b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    b.setAttribute('aria-label', label);
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-heart"/></svg>';
+    return b;
+  }
+
+  var toastTimer = 0;
+  function toast(msg) {
+    var t = $('toast');
+    t.textContent = msg;
+    t.classList.add('on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove('on'); }, 2200);
+  }
+
+  // ----- Who is writing -----
+  function renderWho() {
+    var box = $('who');
+    box.textContent = '';
+    ANIMALS.forEach(function (a, i) {
+      var b = el('button', 'avatar sm animal', a.face);
+      b.type = 'button';
+      b.style.background = a.bg;
+      b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', i === state.me ? 'true' : 'false');
+      b.setAttribute('aria-label', a.name + ' · ' + a.en);
+      b.title = a.name;
+      b.addEventListener('click', function () {
+        state.me = i; state.picked = true; save(); renderWho();
+        if (!coarse()) $('input').focus();
+      });
+      box.appendChild(b);
+    });
+    var me = ANIMALS[state.me];
+    $('whoName').textContent = me.name;
+    $('barName').textContent = me.name;
+    $('barAv').textContent = me.face;
+    $('barAv').style.background = me.bg;
+    $('input').placeholder = 'Add a comment…';
+    // Keep the chosen face in view inside the row (never scroll the page for this).
+    var on = box.querySelector('[aria-checked="true"]');
+    if (on) {
+      if (on.offsetLeft < box.scrollLeft) box.scrollLeft = Math.max(0, on.offsetLeft - 8);
+      else if (on.offsetLeft + on.offsetWidth > box.scrollLeft + box.clientWidth) box.scrollLeft = on.offsetLeft + on.offsetWidth - box.clientWidth + 8;
+    }
+  }
+
+  // ----- Comments on screen -----
+  function renderViewAll() {
+    var b = $('viewall');
+    b.setAttribute('aria-expanded', state.top ? 'true' : 'false');
+    b.textContent = state.top ? 'Hide top comments' : 'View all ' + fmt(BASE_COMMENTS + state.comments.length) + ' comments';
+  }
+  function renderTop() {
+    var ul = $('top');
+    ul.textContent = '';
+    TOP.forEach(function (c, i) {
+      var li = el('li', 'c');
+      var av = el('span', 'avatar sm letter', c.user.charAt(0).toUpperCase());
+      av.style.background = c.bg;
+      av.setAttribute('aria-hidden', 'true');
+      var body = el('div', 'c-body');
+      var p = el('p');
+      p.appendChild(el('b', '', c.user));
+      p.appendChild(document.createTextNode(' ' + c.ko));
+      var meta = el('p', 'meta');
+      var liked = !!state.topLiked[i];
+      meta.appendChild(el('span', '', c.time));
+      meta.appendChild(el('span', '', fmt(c.likes + (liked ? 1 : 0)) + ' likes'));
+      body.appendChild(p);
+      body.appendChild(el('p', 'en', c.en));
+      body.appendChild(meta);
+      var h = heartButton(liked, 'Like comment · 댓글 좋아요');
+      h.addEventListener('click', function () {
+        if (state.topLiked[i]) delete state.topLiked[i]; else state.topLiked[i] = true;
+        save(); renderTop();
+      });
+      li.appendChild(av); li.appendChild(body); li.appendChild(h);
+      ul.appendChild(li);
+    });
+    ul.hidden = !state.top;
+    renderViewAll();
+  }
+
+  // newIds: comments to animate in; scrollTo: the one to bring into view (if any).
+  function renderList(newIds, scrollTo) {
+    var ul = $('list');
+    ul.textContent = '';
+    var target = null;
+    state.comments.forEach(function (c) {
+      var a = ANIMALS[c.who];
+      var li = el('li', 'c' + (newIds && newIds[c.id] ? ' new' : ''));
+      var body = el('div', 'c-body');
+      var p = el('p');
+      p.appendChild(el('b', '', a.name));
+      p.appendChild(document.createTextNode(' ' + c.text));
+      var meta = el('p', 'meta');
+      var when = el('span', 'when', ago(c.t));
+      when.setAttribute('data-t', String(c.t));
+      meta.appendChild(when);
+      if (state.likedC[c.id]) meta.appendChild(el('span', '', '1 like'));
+      if (teacher || state.mine[c.id]) {
+        var del = el('button', '', '삭제 · Delete');
+        del.type = 'button';
+        del.addEventListener('click', function () { removeComment(c); toast('댓글을 지웠어요 · Comment deleted'); });
+        meta.appendChild(del);
+      }
+      body.appendChild(p); body.appendChild(meta);
+      var h = heartButton(!!state.likedC[c.id], 'Like comment · 댓글 좋아요');
+      h.addEventListener('click', function () {
+        if (state.likedC[c.id]) delete state.likedC[c.id]; else state.likedC[c.id] = true;
+        save(); renderList();
+      });
+      li.appendChild(animalAvatar(c.who)); li.appendChild(body); li.appendChild(h);
+      ul.appendChild(li);
+      if (c.id === scrollTo) target = li;
+    });
+    renderViewAll();
+    if (target && target.scrollIntoView) {
+      try { target.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { target.scrollIntoView(false); }
+    }
+  }
+
+  function postComment() {
+    var input = $('input');
+    var text = input.value.replace(/\s+/g, ' ').trim().slice(0, MAX_LEN);
+    if (!text) return;
+    var c = { id: 'local-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), key: '', who: state.me, text: text, t: Date.now() };
+    state.comments.push(c);
+    if (state.comments.length > MAX_KEEP) state.comments = state.comments.slice(-MAX_KEEP);
+    state.mine[c.id] = true;
+    state.picked = true;
+    save();
+    input.value = '';
+    $('post').disabled = true;
+    var fresh = {}; fresh[c.id] = true;
+    renderList(fresh, c.id);
+    if (coarse()) input.blur();
+    send(c);
+  }
+
+  // ----- Sharing comments between devices -----
+  var busy = false, live = null, gone = {}, twins = {}, firstPull = true;
+
+  function request(url, options) {
+    var ctl = window.AbortController ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 7000) : 0;
+    var opt = options || {};
+    opt.cache = 'no-store';
+    if (ctl) opt.signal = ctl.signal;
+    return fetch(url, opt).then(function (r) {
+      clearTimeout(timer);
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.json();
+    }, function (e) { clearTimeout(timer); throw e; });
+  }
+  function setLive(v) {
+    if (live === v) return;
+    live = v;
+    var n = $('net');
+    n.hidden = false;
+    n.className = v ? 'net on' : 'net';
+    $('netText').textContent = v ? 'live' : 'offline';
+    n.title = v ? '댓글이 다른 기기와 맞춰지고 있어요 · Comments are syncing' : '지금은 이 기기에서만 보여요 · Showing on this device only';
+    renderMenu();
+  }
+
+  // A comment's id changes from its local one to the shared key once it is stored.
+  function rekey(c, key) {
+    var old = c.id;
+    c.key = key; c.id = key;
+    ['mine', 'likedC'].forEach(function (k) { if (state[k][old]) { state[k][key] = true; delete state[k][old]; } });
+  }
+  function send(c) {
+    if (!ROOM || c.key || c.sending) return;
+    c.sending = true;
+    // A plain-text body keeps this a "simple" cross-site request; the database reads it as JSON.
+    request(ROOM + '.json', { method: 'POST', body: JSON.stringify({ who: c.who, text: c.text, t: c.t }) }).then(function (j) {
+      c.sending = false;
+      if (j && typeof j.name === 'string' && !c.key) { rekey(c, j.name); save(); setLive(true); renderList(); }
+    }, function () { c.sending = false; c.failedAt = Date.now(); setLive(false); });
+  }
+  function erase(key) {
+    gone[key] = Date.now();
+    // POST with a method override keeps this a "simple" cross-site request too.
+    request(ROOM + '/' + encodeURIComponent(key) + '.json?x-http-method-override=DELETE', { method: 'POST' }).then(function () {}, function () {});
+  }
+  function removeComment(c) {
+    state.comments = state.comments.filter(function (x) { return x.id !== c.id; });
+    delete state.mine[c.id]; delete state.likedC[c.id];
+    save(); renderList();
+    if (ROOM && c.key) [c.key].concat(twins[c.key] || []).forEach(erase);
+  }
+  // started: when the list was asked for. A comment whose sending failed is only sent again after a
+  // list asked for later than that failure shows it is really missing (it may have been stored anyway).
+  function applyShared(data, started) {
+    var shared = [], stored = {};
+    twins = {};
+    if (data && typeof data === 'object') {
+      Object.keys(data).sort().forEach(function (k) { // keys sort by time of arrival
+        var c = data[k];
+        if (!validComment(c)) return;
+        if (gone[k] && Date.now() - gone[k] < 15000) return;
+        var text = c.text.slice(0, MAX_LEN), t = Number(c.t) || 0, sig = c.who + '|' + t + '|' + text;
+        // The same animal, text and millisecond twice is one comment that got stored twice: show it once.
+        if (stored[sig]) { (twins[stored[sig]] = twins[stored[sig]] || []).push(k); return; }
+        stored[sig] = k;
+        shared.push({ id: k, key: k, who: c.who, text: text, t: t || Date.now() });
+      });
+    }
+    shared = shared.slice(-MAX_KEEP);
+    // Comments written here that are not stored yet stay at the end. One that turns out to be stored
+    // already (its answer was lost on the way back) is taken as stored instead of being sent twice.
+    var before = {};
+    state.comments.forEach(function (c) { before[c.id] = c.who + ':' + c.text; });
+    var waiting = state.comments.filter(function (c) {
+      if (c.key) return false;
+      var k = stored[c.who + '|' + c.t + '|' + c.text];
+      if (!k) return true;
+      before[k] = before[c.id];
+      rekey(c, k);
+      return false;
+    });
+    var next = shared.concat(waiting);
+    var fresh = {}, lastFresh = '', changed = next.length !== state.comments.length;
+    next.forEach(function (c, i) {
+      if (!(c.id in before)) { fresh[c.id] = true; lastFresh = c.id; changed = true; }
+      else if (before[c.id] !== c.who + ':' + c.text || (state.comments[i] || {}).id !== c.id) changed = true;
+    });
+    // First visit on this device: avoid starting as an animal that is already talking.
+    if (firstPull && !state.picked && shared.some(function (c) { return c.who === state.me; })) {
+      var free = ANIMALS.map(function (a, i) { return i; }).filter(function (i) { return !shared.some(function (c) { return c.who === i; }); });
+      if (free.length) { state.me = free[Math.floor(Math.random() * free.length)]; renderWho(); }
+    }
+    if (changed) {
+      state.comments = next;
+      save();
+      var typing = document.activeElement === $('input') && $('input').value !== '';
+      renderList(firstPull ? null : fresh, !firstPull && lastFresh && !(coarse() && typing) ? lastFresh : null);
+    }
+    firstPull = false;
+    waiting.forEach(function (c) { if (!c.failedAt || started > c.failedAt) send(c); });
+  }
+  function pull() {
+    if (!ROOM || busy || document.hidden) return;
+    busy = true;
+    var started = Date.now();
+    request(ROOM + '.json').then(function (data) { busy = false; setLive(true); applyShared(data, started); }, function () { busy = false; setLive(false); });
+  }
+  function clearAll() {
+    var keys = state.comments.map(function (c) { return c.key; }).filter(Boolean);
+    state.comments = []; state.mine = {}; state.likedC = {}; state.topLiked = {};
+    state.liked = false; state.saved = false; state.following = false; state.top = false;
+    save(); renderAll();
+    if (ROOM && live) {
+      keys.forEach(function (k) { [k].concat(twins[k] || []).forEach(erase); });
+    }
+  }
+
+  // ----- Post buttons -----
+  function renderPost() {
+    $('like').setAttribute('aria-pressed', state.liked ? 'true' : 'false');
+    $('likes').textContent = fmt(BASE_LIKES + (state.liked ? 1 : 0));
+    $('savep').setAttribute('aria-pressed', state.saved ? 'true' : 'false');
+    var f = $('follow');
+    f.setAttribute('aria-pressed', state.following ? 'true' : 'false');
+    f.classList.toggle('on', state.following);
+    f.textContent = state.following ? 'Following' : 'Follow';
+  }
+  function popHeart() {
+    var p = $('pop');
+    p.classList.remove('go');
+    void p.getBoundingClientRect();
+    p.classList.add('go');
+  }
+  function copyLink() {
+    var url = window.location.href.replace(/[?#].*$/, '');
+    function ok() { toast('링크를 복사했어요 · Link copied'); }
+    function fallback() { toast('주소창의 주소를 복사해 주세요 · Copy the address from the address bar'); }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(ok, fallback);
+      else fallback();
+    } catch (e) { fallback(); }
+  }
+
+  // ----- Menu -----
+  // While comments are shared, only the teacher's device can clear them all.
+  var armed = false;
+  function clearLabel() {
+    return live ? '모든 기기의 댓글 지우기 · Clear all comments' : '이 기기의 댓글 지우기 · Clear comments';
+  }
+  function renderMenu() {
+    $('clear').hidden = !!live && !teacher;
+    if (!armed) $('clear').textContent = clearLabel();
+  }
+  function closeMenu() {
+    $('menu').hidden = true;
+    $('more').setAttribute('aria-expanded', 'false');
+    armed = false;
+    renderMenu();
+  }
+
+  function wire() {
+    $('form').addEventListener('submit', function (e) { e.preventDefault(); postComment(); });
+    $('input').addEventListener('input', function () { $('post').disabled = !this.value.trim(); });
+    $('like').addEventListener('click', function () {
+      state.liked = !state.liked; save(); renderPost();
+      if (state.liked) popHeart();
+    });
+    $('media').addEventListener('dblclick', function () {
+      if (!state.liked) { state.liked = true; save(); renderPost(); }
+      popHeart();
+    });
+    $('savep').addEventListener('click', function () {
+      state.saved = !state.saved; save(); renderPost();
+      toast(state.saved ? '저장했어요 · Saved' : '저장을 취소했어요 · Removed from saved');
+    });
+    $('follow').addEventListener('click', function () { state.following = !state.following; save(); renderPost(); });
+    $('msg').addEventListener('click', function () { toast('지금은 메시지를 받지 않아요 · Messages are turned off'); });
+    $('share').addEventListener('click', copyLink);
+    $('tocomment').addEventListener('click', function () { $('input').focus(); });
+    $('viewall').addEventListener('click', function () { state.top = !state.top; save(); renderTop(); });
+
+    $('more').addEventListener('click', function (e) {
+      e.stopPropagation();
+      if ($('menu').hidden) { renderMenu(); $('menu').hidden = false; $('more').setAttribute('aria-expanded', 'true'); } else closeMenu();
+    });
+    $('menu').addEventListener('click', function (e) { e.stopPropagation(); });
+    $('copy').addEventListener('click', function () { copyLink(); closeMenu(); });
+    $('clear').addEventListener('click', function () {
+      if (!armed) { armed = true; this.textContent = '한 번 더 누르면 지워져요 · Tap again to clear'; return; }
+      clearAll(); closeMenu();
+      toast('댓글을 모두 지웠어요 · Comments cleared');
+    });
+    document.addEventListener('click', closeMenu);
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenu(); });
+
+    // Keep "now / 3m" labels fresh without redrawing the list.
+    setInterval(function () {
+      Array.prototype.forEach.call(document.querySelectorAll('#list .when'), function (n) {
+        n.textContent = ago(Number(n.getAttribute('data-t')));
+      });
+    }, 30000);
+
+    if (ROOM) {
+      setInterval(pull, 2000);
+      document.addEventListener('visibilitychange', pull);
+      window.addEventListener('online', pull);
+    }
+  }
+
+  function renderAll() { renderWho(); renderTop(); renderList(); renderPost(); renderMenu(); }
+
+  // "?reset=1" forgets what this device kept (handy right before class).
+  try {
+    if (param('reset') === '1') window.localStorage.removeItem(KEY);
+  } catch (e) { /* nothing stored */ }
+
+  load();
+  wire();
+  renderAll();
+  pull();
+})();
+</script>
+</body>
+</html>

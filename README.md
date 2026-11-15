@@ -27,9 +27,11 @@ Activities made for a youth Sunday-school class: one passage, one activity, most
 | --- | --- | --- | --- |
 | 마태복음 9:1–8 · Matthew 9:1–8 | 그가 일어나기 전 · Before He Stood | 이야기 게임 (세 인물, 약 20분) | [`apps/before-he-stood/`](apps/before-he-stood/) |
 | 마태복음 14:22–33 · Matthew 14:22–33 | 새벽 3시 · The Fourth Watch | 건너기 게임 (한 사람 60초, 키보드 · 휴대폰) | [`apps/fourth-watch/`](apps/fourth-watch/) |
+| 마태복음 16:21–23 · Matthew 16:21–23 | 마지막 게시물 · The Last Post | 댓글 달기 (수업 도입, 컴퓨터 · 휴대폰, 로그인 없음) | [`apps/the-last-post/`](apps/the-last-post/) |
 
 - **그가 일어나기 전**: 사용법과 내용 수정 방법은 [`apps/before-he-stood/README.md`](apps/before-he-stood/README.md)에 있어요.
 - **새벽 3시**: 선생님용 키, 숨겨진 규칙, 휴대폰 버전 조작은 [`apps/fourth-watch/README.md`](apps/fourth-watch/README.md)에 있어요.
+- **마지막 게시물**: 지어낸 작가의 글에 반 아이들이 댓글을 다는 화면이에요. 선생님 화면, 댓글이 맞춰지는 방식, 데이터베이스 규칙은 [`apps/the-last-post/README.md`](apps/the-last-post/README.md)에 있어요.
 
 ## 수업을 만드는 기준
 
@@ -42,6 +44,7 @@ index.html                 앱 목록과 수업 목록 (첫 화면)
 lessons/                   수업별 진행안과 인쇄 자료 (01–06)
 apps/before-he-stood/      그가 일어나기 전 (이야기 게임, 도구와 테스트 포함)
 apps/fourth-watch/         새벽 3시 (index.html: 키보드 버전, mobile.html: 휴대폰 버전)
+apps/the-last-post/        마지막 게시물 (index.html 하나: 지어낸 앱의 글과 댓글)
 docs/five-criteria.md      수업을 만들 때 보는 다섯 가지
 ```
 
@@ -49,4 +52,4 @@ docs/five-criteria.md      수업을 만들 때 보는 다섯 가지
 
 성경 본문: 성경전서 개역개정판 © 대한성서공회. Scripture quotations are from the ESV® Bible (The Holy Bible, English Standard Version®), © 2001 by Crossway, a publishing ministry of Good News Publishers. Used by permission. All rights reserved.
 
-게임 속 인물의 이름, 가족, 대화와 이야기는 창작이에요.
+게임 속 인물의 이름, 가족, 대화와 이야기는 창작이에요. 「마지막 게시물」의 앱 follo, 작가 지호, 팔로워와 댓글도 모두 지어낸 것이에요.
