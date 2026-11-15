@@ -63,7 +63,14 @@
   .avatar { flex: none; display: inline-grid; place-items: center; border-radius: 50%; overflow: hidden; background: var(--soft); }
   .avatar svg { display: block; width: 100%; height: 100%; }
   .avatar.sm { width: 2.15rem; height: 2.15rem; }
-  .avatar.xl { width: 5.2rem; height: 5.2rem; box-shadow: 0 0 0 3px #fff, 0 0 0 5px var(--accent); margin: 5px; }
+  .avatar.xl { width: 5.2rem; height: 5.2rem; }
+  /* The ring around the profile picture opens the stories; it turns grey once they have been seen. */
+  .ring { flex: none; display: inline-grid; padding: 3px; border-radius: 50%; background: linear-gradient(135deg, #4f46e5, #22c1dc); line-height: 0; }
+  .ring .avatar { margin: 3px; box-shadow: 0 0 0 3px #fff; }
+  .ring.sm { padding: 2px; }
+  .ring.sm .avatar { margin: 2px; box-shadow: 0 0 0 2px #fff; }
+  .ring.seen { background: #cfcfd8; }
+  .ring:active { transform: scale(.97); }
   .avatar.animal { font-family: var(--emoji); font-size: 1.22rem; line-height: 1; }
   .avatar.letter { font-weight: 800; font-size: .9rem; color: rgba(0, 0, 0, .62); }
   .badge { width: 1.05em; height: 1.05em; flex: none; vertical-align: -.16em; }
@@ -187,6 +194,56 @@
   .write button { flex: none; height: 2.6rem; padding: 0 .5rem; color: var(--accent); font-weight: 800; }
   .write button:disabled { opacity: .35; cursor: default; }
 
+  /* Jiho's like and reply under a comment */
+  .by { display: inline-flex; align-items: center; gap: .25rem; color: var(--like); font-weight: 600; }
+  .by svg { width: .8rem; height: .8rem; fill: var(--like); }
+  .reply { display: flex; gap: .55rem; align-items: flex-start; margin-top: .6rem; }
+  .reply .avatar { width: 1.6rem; height: 1.6rem; }
+  .reply p { font-size: .93rem; }
+  .reply .badge { margin-left: .2rem; }
+
+  /* Stories: a tall card with bars on top. Tap the right side for the next one, the left side for
+     the one before, hold to pause. */
+  .stories { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 60; background: rgba(10, 10, 16, .94); display: grid; place-items: center; }
+  .st-card { position: relative; width: 100%; height: 100%; overflow: hidden; background: #14131d; color: #fff; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation; cursor: pointer; }
+  .st-bars { position: absolute; left: .6rem; right: .6rem; top: .6rem; z-index: 3; display: flex; gap: .25rem; }
+  .st-bars i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255, 255, 255, .35); overflow: hidden; }
+  .st-bars b { display: block; width: 0; height: 100%; background: #fff; }
+  .st-bars .done b { width: 100%; }
+  .st-bars .now b { animation: stfill 7s linear forwards; }
+  .stories.paused .st-bars .now b { animation-play-state: paused; }
+  @keyframes stfill { from { width: 0; } to { width: 100%; } }
+  .st-head { position: absolute; left: .8rem; right: .4rem; top: 1.1rem; z-index: 3; display: flex; align-items: center; gap: .5rem; font-size: .9rem; text-shadow: 0 1px 8px rgba(0, 0, 0, .45); }
+  .st-head .avatar { width: 2rem; height: 2rem; }
+  .st-head .t { opacity: .8; }
+  .st-head button { margin-left: auto; width: 2.6rem; height: 2.6rem; display: grid; place-items: center; color: #fff; }
+  .st-head button svg { width: 1.3rem; height: 1.3rem; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
+  .st-head button:focus-visible { outline: 2px solid rgba(255, 255, 255, .75); outline-offset: -7px; border-radius: 50%; }
+  .st { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: none; flex-direction: column; justify-content: flex-end; padding: 4.5rem 1.4rem 2.4rem; }
+  .st.on { display: flex; }
+  .st h3 { position: relative; margin: 0; font-size: 1.7rem; line-height: 1.3; font-weight: 800; text-shadow: 0 1px 12px rgba(0, 0, 0, .35); }
+  .st p { position: relative; margin-top: .55rem; font-size: 1.02rem; line-height: 1.5; text-shadow: 0 1px 10px rgba(0, 0, 0, .35); }
+  .st .en { display: block; margin-top: .3rem; opacity: .86; }
+  .st-art { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  .st-shade { position: absolute; left: 0; right: 0; bottom: 0; height: 58%; background: linear-gradient(rgba(12, 10, 30, 0), rgba(12, 10, 30, .86)); }
+  .st-paper { position: absolute; left: 50%; top: 16%; width: 60%; transform: translateX(-50%) rotate(-4deg); padding: 7% 7% 4%; border-radius: .5rem; background: #fffaf0; box-shadow: 0 14px 40px rgba(0, 0, 0, .4); color: #2b2b3a; text-align: center; font-size: .9rem; font-weight: 700; letter-spacing: .12em; }
+  .st-paper svg { display: block; width: 100%; height: auto; margin-bottom: .3rem; }
+  .st-paper.last { transform: translateX(-50%) rotate(3deg); padding: 5% 5% 3.5%; }
+  .st-paper.last svg { border-radius: .2rem; margin-bottom: .5rem; }
+  .st-big { position: absolute; left: 0; right: 0; top: 23%; text-align: center; text-shadow: 0 4px 24px rgba(0, 0, 0, .25); }
+  .st-big b { display: block; font-size: 4.3rem; line-height: 1; font-weight: 900; letter-spacing: -.03em; }
+  .st-big span { display: block; margin-top: .5rem; font-size: 1.05rem; letter-spacing: .32em; text-transform: uppercase; opacity: .9; }
+  .st-notes { position: absolute; left: 8%; right: 8%; top: 15%; display: grid; gap: .7rem; }
+  .st-notes span { display: flex; align-items: center; gap: .6rem; padding: .85rem 1rem; border-radius: 1rem; background: rgba(255, 255, 255, .1); border: 1px solid rgba(255, 255, 255, .14); font-size: .98rem; font-weight: 600; }
+  .st-notes span:nth-child(2) { margin-left: 10%; }
+  .st-notes span:nth-child(3) { margin-right: 12%; }
+  .st-notes span:nth-child(4) { margin-left: 5%; opacity: .7; }
+  .st-notes svg { flex: none; width: 1.1rem; height: 1.1rem; fill: #ff5d7a; }
+  .st-cta { position: relative; align-self: flex-start; margin-top: 1.1rem; height: 2.9rem; padding: 0 1.3rem; border-radius: 1.45rem; background: #fff; color: #17171c; font-weight: 800; font-size: 1rem; }
+  @media (min-width: 700px) and (min-height: 500px) {
+    .st-card { width: calc(min(92vh, 58rem) * 9 / 16); height: min(92vh, 58rem); border-radius: 1.1rem; }
+  }
+
   .toast {
     position: fixed; left: 50%; bottom: 9.5rem; z-index: 40; transform: translateX(-50%);
     max-width: calc(100vw - 2rem); padding: .6rem 1rem; border-radius: 999px;
@@ -218,7 +275,8 @@
       grid-template-areas: "av name btns" "av stats btns" "av bio btns";
     }
     .p-top { display: contents; }
-    .profile .avatar.xl { grid-area: av; width: 4.3rem; height: 4.3rem; }
+    .profile .ring { grid-area: av; }
+    .profile .avatar.xl { width: 4.3rem; height: 4.3rem; }
     .p-name { grid-area: name; margin-top: 0; }
     .stats { grid-area: stats; display: flex; flex-wrap: wrap; gap: 0 .9rem; text-align: left; }
     .stats li { display: flex; align-items: baseline; gap: .3rem; }
@@ -241,29 +299,130 @@
   }
   @media (prefers-reduced-motion: reduce) {
     .pop.go, .c.new { animation: none; }
+    .ring:active { transform: none; }
     .who button, .toast { transition: none; }
   }
 </style>
 </head>
 <body>
 
-<!-- Shared drawings: the artist's profile picture and the small icons -->
+<!-- Shared drawings: the artist's profile picture, the drawings and the small icons -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
   <defs>
-    <linearGradient id="jiho-g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#ffbe8f"/><stop offset=".5" stop-color="#ee7aa5"/><stop offset="1" stop-color="#6f62ea"/>
+    <!-- Profile picture: someone in profile against an evening sky, lit from behind -->
+    <linearGradient id="av-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4d5fc9"/><stop offset=".4" stop-color="#d987b4"/><stop offset=".74" stop-color="#ffbe8a"/><stop offset="1" stop-color="#ffe2b4"/>
     </linearGradient>
+    <radialGradient id="av-sun" cx="76" cy="56" r="52" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fffef4"/><stop offset=".16" stop-color="#fff3c8" stop-opacity=".96"/><stop offset=".5" stop-color="#ffd59a" stop-opacity=".42"/><stop offset="1" stop-color="#ffd59a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="av-body" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#110f27"/><stop offset=".6" stop-color="#231a3d"/><stop offset=".86" stop-color="#4a2f4c"/><stop offset="1" stop-color="#8a5560"/>
+    </linearGradient>
+    <linearGradient id="av-hood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17142f"/><stop offset="1" stop-color="#2c2147"/>
+    </linearGradient>
+    <radialGradient id="av-vig" cx="50" cy="48" r="62" gradientUnits="userSpaceOnUse">
+      <stop offset=".62" stop-color="#1a1035" stop-opacity="0"/><stop offset="1" stop-color="#1a1035" stop-opacity=".42"/>
+    </radialGradient>
+    <filter id="av-soft" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="2.6"/></filter>
+    <filter id="av-rim" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation=".55"/></filter>
+    <filter id="av-grain" x="0" y="0" width="100%" height="100%">
+      <feTurbulence type="fractalNoise" baseFrequency="1.6" numOctaves="2" seed="7" result="n"/>
+      <feColorMatrix in="n" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  .9 0 0 0 -.38"/>
+    </filter>
     <symbol id="av-jiho" viewBox="0 0 100 100">
-      <rect width="100" height="100" fill="url(#jiho-g)"/>
-      <ellipse cx="30" cy="22" rx="34" ry="20" fill="#fff" opacity=".16"/>
-      <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M29 49 q7 -9 14 0"/>
-        <path d="M57 49 q7 -9 14 0"/>
-        <path d="M38 63 q12 11 24 0"/>
-        <path d="M50 27 v-9 q7 -9 15 -3"/>
+      <rect width="100" height="100" fill="url(#av-sky)"/>
+      <g filter="url(#av-soft)" fill="#fff"><circle cx="14" cy="24" r="9" opacity=".2"/><circle cx="34" cy="9" r="5" opacity=".16"/><circle cx="92" cy="16" r="11" opacity=".16"/><circle cx="7" cy="66" r="7" opacity=".1"/><circle cx="94" cy="84" r="8" opacity=".12"/></g>
+      <circle cx="76" cy="56" r="52" fill="url(#av-sun)"/>
+      <g transform="translate(-13.8 -6.2) scale(1.16)">
+        <!-- hood of a sweatshirt behind the neck, then shoulders, neck and face in profile -->
+        <path fill="url(#av-hood)" d="M24 100 C22 88 27 77 37 72 C41 70 44 72 46 76 L60 80 C64 84 62 92 58 100 Z"/>
+        <path fill="url(#av-body)" d="M22 100 C22 89 26 80 36 74 C40 72 42 70 42 66 L42 58 C36 54 33 47 34 40 C36 28 46 22 56 23 C66 24 72 30 73 39 C73.5 42 75 44.5 77.5 49 C78.3 50.5 77.6 51.6 75.8 52 L74.5 52.3 C75.2 53.8 75.2 55 74.3 56 C75 57 74.9 58.1 73.8 59 C74.3 61.5 74.2 64 72.5 66 C70.5 68.3 66.5 68.8 62 68 C61.5 71.5 62.5 74 66 76.5 C78 81 88 89 92 100 Z"/>
+        <!-- hair -->
+        <path fill="#0f0d22" d="M33.5 45 C29.5 33 34.5 20.5 47 16.5 C59 13 70.5 17.5 73.5 27 C74.2 29.5 74 32 73 34.5 C70.5 31 66.5 29.5 62.5 30.2 C58 31 55.3 34.3 54.7 38.8 C54.2 42.8 51.8 45.8 48.2 46.9 C48.5 51 47.2 55 44.2 58.2 C38.5 56 34.8 51.5 33.5 45 Z"/>
+        <!-- warm light catching the edge of the face, the hair and the shoulder -->
+        <path filter="url(#av-rim)" fill="none" stroke="#fff0c8" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" opacity=".95" d="M73 39 C73.5 42 75 44.5 77.5 49 C78.3 50.5 77.6 51.6 75.8 52 L74.5 52.3 C75.2 53.8 75.2 55 74.3 56 C75 57 74.9 58.1 73.8 59 C74.3 61.5 74.2 64 72.5 66"/>
+        <path filter="url(#av-rim)" fill="none" stroke="#ffd9a0" stroke-width=".9" stroke-linecap="round" opacity=".65" d="M66 76.5 C78 81 88 89 92 100"/>
+        <path filter="url(#av-rim)" fill="none" stroke="#ffcf9a" stroke-width=".8" stroke-linecap="round" opacity=".6" d="M58 14.5 C65 15 71 19.5 73.5 27"/>
       </g>
-      <circle cx="25" cy="62" r="5" fill="#fff" opacity=".4"/>
-      <circle cx="75" cy="62" r="5" fill="#fff" opacity=".4"/>
+      <!-- lens flare, soft dark corners and a little film grain -->
+      <g fill="#fff"><circle cx="90" cy="40" r="1.5" opacity=".28"/><circle cx="95" cy="33" r="2.6" opacity=".12"/></g>
+      <rect width="100" height="100" fill="url(#av-vig)"/>
+      <rect width="100" height="100" filter="url(#av-grain)" opacity=".16"/>
+    </symbol>
+    <!-- The first drawing, three years ago (shown in a story) -->
+    <symbol id="doodle-first" viewBox="0 0 100 100">
+      <g fill="none" stroke="#2b2b3a" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="50" cy="54" r="33"/>
+        <path d="M33 49 q6 -8 12 0"/>
+        <path d="M55 49 q6 -8 12 0"/>
+        <path d="M40 64 q10 10 20 0"/>
+        <path d="M50 21 v-8 q6 -8 13 -3"/>
+      </g>
+      <circle cx="30" cy="62" r="4.5" fill="#f3a3b5"/>
+      <circle cx="70" cy="62" r="4.5" fill="#f3a3b5"/>
+    </symbol>
+    <!-- The last drawing: used by the post and by one story -->
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2150"/><stop offset=".34" stop-color="#55408c"/><stop offset=".66" stop-color="#dc6f8e"/><stop offset="1" stop-color="#ffc48c"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="300" cy="262" r="250" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff8dc"/><stop offset=".22" stop-color="#ffeeb0" stop-opacity=".85"/><stop offset=".55" stop-color="#ffd69a" stop-opacity=".28"/><stop offset="1" stop-color="#ffd69a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="door" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#fff0bf"/>
+    </linearGradient>
+    <symbol id="art-stairs" viewBox="0 0 600 600">
+      <rect width="600" height="600" fill="url(#sky)"/>
+      <g fill="#fff">
+        <circle cx="62" cy="118" r="1.8" opacity=".8"/><circle cx="128" cy="64" r="1.3" opacity=".7"/><circle cx="196" cy="140" r="1.5" opacity=".6"/>
+        <circle cx="92" cy="208" r="1.2" opacity=".5"/><circle cx="412" cy="58" r="1.6" opacity=".8"/><circle cx="486" cy="128" r="1.3" opacity=".7"/>
+        <circle cx="548" cy="72" r="1.9" opacity=".8"/><circle cx="522" cy="216" r="1.2" opacity=".5"/><circle cx="352" cy="104" r="1.1" opacity=".6"/>
+        <circle cx="246" cy="48" r="1.4" opacity=".7"/>
+      </g>
+      <ellipse cx="118" cy="330" rx="150" ry="20" fill="#fff" opacity=".1"/>
+      <ellipse cx="500" cy="376" rx="170" ry="24" fill="#fff" opacity=".1"/>
+      <circle cx="300" cy="262" r="250" fill="url(#glow)"/>
+      <path d="M279 304 V246 a21 21 0 0 1 42 0 V304 Z" fill="url(#door)"/>
+      <rect x="74.0" y="558.0" width="452.0" height="42.6" fill="#27224f"/>
+      <rect x="74.0" y="558.0" width="452.0" height="10.1" fill="#5f5b7d"/>
+      <rect x="102.9" y="521.4" width="394.1" height="37.2" fill="#2c2751"/>
+      <rect x="102.9" y="521.4" width="394.1" height="8.8" fill="#635f7e"/>
+      <rect x="128.2" y="489.4" width="343.7" height="32.5" fill="#342e54"/>
+      <rect x="128.2" y="489.4" width="343.7" height="7.7" fill="#696480"/>
+      <rect x="150.1" y="461.6" width="299.7" height="28.4" fill="#3e3658"/>
+      <rect x="150.1" y="461.6" width="299.7" height="6.7" fill="#706a83"/>
+      <rect x="169.3" y="437.3" width="261.3" height="24.9" fill="#48405d"/>
+      <rect x="169.3" y="437.3" width="261.3" height="5.8" fill="#787287"/>
+      <rect x="186.1" y="416.1" width="227.9" height="21.8" fill="#544a62"/>
+      <rect x="186.1" y="416.1" width="227.9" height="5.1" fill="#80798b"/>
+      <rect x="200.6" y="397.7" width="198.7" height="19.1" fill="#605567"/>
+      <rect x="200.6" y="397.7" width="198.7" height="4.4" fill="#89818f"/>
+      <rect x="213.4" y="381.6" width="173.3" height="16.7" fill="#6e616c"/>
+      <rect x="213.4" y="381.6" width="173.3" height="3.9" fill="#948a92"/>
+      <rect x="224.4" y="367.5" width="151.1" height="14.6" fill="#7c6d72"/>
+      <rect x="224.4" y="367.5" width="151.1" height="3.4" fill="#9e9397"/>
+      <rect x="234.1" y="355.3" width="131.8" height="12.8" fill="#8a7a78"/>
+      <rect x="234.1" y="355.3" width="131.8" height="2.9" fill="#a89d9b"/>
+      <rect x="242.6" y="344.6" width="114.9" height="11.3" fill="#9a887e"/>
+      <rect x="242.6" y="344.6" width="114.9" height="2.6" fill="#b4a7a0"/>
+      <rect x="249.9" y="335.3" width="100.2" height="9.9" fill="#a99685"/>
+      <rect x="249.9" y="335.3" width="100.2" height="2.2" fill="#bfb1a5"/>
+      <rect x="256.3" y="327.2" width="87.4" height="8.7" fill="#b9a48b"/>
+      <rect x="256.3" y="327.2" width="87.4" height="1.9" fill="#cbbca9"/>
+      <rect x="261.9" y="320.1" width="76.2" height="7.7" fill="#cab392"/>
+      <rect x="261.9" y="320.1" width="76.2" height="1.7" fill="#d8c7ae"/>
+      <rect x="266.8" y="313.9" width="66.4" height="6.8" fill="#dbc299"/>
+      <rect x="266.8" y="313.9" width="66.4" height="1.5" fill="#e4d2b4"/>
+      <rect x="271.0" y="308.5" width="57.9" height="6.0" fill="#edd2a1"/>
+      <rect x="271.0" y="308.5" width="57.9" height="1.3" fill="#f2deb9"/>
+      <rect x="274.7" y="303.9" width="50.5" height="5.3" fill="#ffe2a8"/>
+      <rect x="274.7" y="303.9" width="50.5" height="1.2" fill="#ffeabf"/>
+      <g fill="#15123a">
+        <circle cx="300" cy="476" r="8.5"/>
+        <path d="M291 489 h18 a4 4 0 0 1 4 4 l2.5 28.5 h-31 l2.5 -28.5 a4 4 0 0 1 4 -4 z"/>
+      </g>
     </symbol>
     <symbol id="i-badge" viewBox="0 0 24 24">
       <path fill="#4f46e5" d="M12 1.6l2.4 1.9 3-.4 1.2 2.8 2.8 1.2-.4 3 1.9 2.4-1.9 2.4.4 3-2.8 1.2-1.2 2.8-3-.4L12 23.4l-2.4-1.9-3 .4-1.2-2.8-2.8-1.2.4-3L1.1 12.5 3 10.1l-.4-3 2.8-1.2 1.2-2.8 3 .4z"/>
@@ -300,7 +459,7 @@
   <div class="left">
     <section class="profile" aria-label="Profile">
       <div class="p-top">
-        <span class="avatar xl"><svg aria-hidden="true"><use href="#av-jiho"/></svg></span>
+        <button type="button" class="ring story-open" aria-label="jiho.draws 스토리 보기 · View jiho.draws’ story"><span class="avatar xl"><svg aria-hidden="true"><use href="#av-jiho"/></svg></span></button>
         <ul class="stats">
           <li><b>1,096</b><span>posts</span></li>
           <li><b id="followers">50K</b><span>followers</span></li>
@@ -317,66 +476,7 @@
 
     <div class="media" id="media">
       <svg class="art" viewBox="0 0 600 600" role="img" aria-label="지호의 마지막 그림: 빛을 향해 올라가는 긴 계단 앞에 선 사람 · Jiho's last drawing: a small figure at the foot of a long stairway rising toward a light">
-        <defs>
-          <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#1c2150"/><stop offset=".34" stop-color="#55408c"/><stop offset=".66" stop-color="#dc6f8e"/><stop offset="1" stop-color="#ffc48c"/>
-          </linearGradient>
-          <radialGradient id="glow" cx="300" cy="262" r="250" gradientUnits="userSpaceOnUse">
-            <stop offset="0" stop-color="#fff8dc"/><stop offset=".22" stop-color="#ffeeb0" stop-opacity=".85"/><stop offset=".55" stop-color="#ffd69a" stop-opacity=".28"/><stop offset="1" stop-color="#ffd69a" stop-opacity="0"/>
-          </radialGradient>
-          <linearGradient id="door" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#fff0bf"/>
-          </linearGradient>
-        </defs>
-        <rect width="600" height="600" fill="url(#sky)"/>
-        <g fill="#fff">
-          <circle cx="62" cy="118" r="1.8" opacity=".8"/><circle cx="128" cy="64" r="1.3" opacity=".7"/><circle cx="196" cy="140" r="1.5" opacity=".6"/>
-          <circle cx="92" cy="208" r="1.2" opacity=".5"/><circle cx="412" cy="58" r="1.6" opacity=".8"/><circle cx="486" cy="128" r="1.3" opacity=".7"/>
-          <circle cx="548" cy="72" r="1.9" opacity=".8"/><circle cx="522" cy="216" r="1.2" opacity=".5"/><circle cx="352" cy="104" r="1.1" opacity=".6"/>
-          <circle cx="246" cy="48" r="1.4" opacity=".7"/>
-        </g>
-        <ellipse cx="118" cy="330" rx="150" ry="20" fill="#fff" opacity=".1"/>
-        <ellipse cx="500" cy="376" rx="170" ry="24" fill="#fff" opacity=".1"/>
-        <circle cx="300" cy="262" r="250" fill="url(#glow)"/>
-        <path d="M279 304 V246 a21 21 0 0 1 42 0 V304 Z" fill="url(#door)"/>
-        <rect x="74.0" y="558.0" width="452.0" height="42.6" fill="#27224f"/>
-        <rect x="74.0" y="558.0" width="452.0" height="10.1" fill="#5f5b7d"/>
-        <rect x="102.9" y="521.4" width="394.1" height="37.2" fill="#2c2751"/>
-        <rect x="102.9" y="521.4" width="394.1" height="8.8" fill="#635f7e"/>
-        <rect x="128.2" y="489.4" width="343.7" height="32.5" fill="#342e54"/>
-        <rect x="128.2" y="489.4" width="343.7" height="7.7" fill="#696480"/>
-        <rect x="150.1" y="461.6" width="299.7" height="28.4" fill="#3e3658"/>
-        <rect x="150.1" y="461.6" width="299.7" height="6.7" fill="#706a83"/>
-        <rect x="169.3" y="437.3" width="261.3" height="24.9" fill="#48405d"/>
-        <rect x="169.3" y="437.3" width="261.3" height="5.8" fill="#787287"/>
-        <rect x="186.1" y="416.1" width="227.9" height="21.8" fill="#544a62"/>
-        <rect x="186.1" y="416.1" width="227.9" height="5.1" fill="#80798b"/>
-        <rect x="200.6" y="397.7" width="198.7" height="19.1" fill="#605567"/>
-        <rect x="200.6" y="397.7" width="198.7" height="4.4" fill="#89818f"/>
-        <rect x="213.4" y="381.6" width="173.3" height="16.7" fill="#6e616c"/>
-        <rect x="213.4" y="381.6" width="173.3" height="3.9" fill="#948a92"/>
-        <rect x="224.4" y="367.5" width="151.1" height="14.6" fill="#7c6d72"/>
-        <rect x="224.4" y="367.5" width="151.1" height="3.4" fill="#9e9397"/>
-        <rect x="234.1" y="355.3" width="131.8" height="12.8" fill="#8a7a78"/>
-        <rect x="234.1" y="355.3" width="131.8" height="2.9" fill="#a89d9b"/>
-        <rect x="242.6" y="344.6" width="114.9" height="11.3" fill="#9a887e"/>
-        <rect x="242.6" y="344.6" width="114.9" height="2.6" fill="#b4a7a0"/>
-        <rect x="249.9" y="335.3" width="100.2" height="9.9" fill="#a99685"/>
-        <rect x="249.9" y="335.3" width="100.2" height="2.2" fill="#bfb1a5"/>
-        <rect x="256.3" y="327.2" width="87.4" height="8.7" fill="#b9a48b"/>
-        <rect x="256.3" y="327.2" width="87.4" height="1.9" fill="#cbbca9"/>
-        <rect x="261.9" y="320.1" width="76.2" height="7.7" fill="#cab392"/>
-        <rect x="261.9" y="320.1" width="76.2" height="1.7" fill="#d8c7ae"/>
-        <rect x="266.8" y="313.9" width="66.4" height="6.8" fill="#dbc299"/>
-        <rect x="266.8" y="313.9" width="66.4" height="1.5" fill="#e4d2b4"/>
-        <rect x="271.0" y="308.5" width="57.9" height="6.0" fill="#edd2a1"/>
-        <rect x="271.0" y="308.5" width="57.9" height="1.3" fill="#f2deb9"/>
-        <rect x="274.7" y="303.9" width="50.5" height="5.3" fill="#ffe2a8"/>
-        <rect x="274.7" y="303.9" width="50.5" height="1.2" fill="#ffeabf"/>
-        <g fill="#15123a">
-          <circle cx="300" cy="476" r="8.5"/>
-          <path d="M291 489 h18 a4 4 0 0 1 4 4 l2.5 28.5 h-31 l2.5 -28.5 a4 4 0 0 1 4 -4 z"/>
-        </g>
+        <use href="#art-stairs"/>
         <text x="30" y="56" fill="#fff" font-family="system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif" font-size="27" font-weight="700">마지막 그림</text>
         <text x="31" y="80" fill="#fff" opacity=".82" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="13.5" letter-spacing="2.4">LAST DRAWING · NO. 1096</text>
         <text x="570" y="586" fill="#fff" opacity=".9" text-anchor="end" font-family="ui-rounded, 'Arial Rounded MT Bold', system-ui, sans-serif" font-size="15" font-weight="700">jiho.</text>
@@ -388,13 +488,14 @@
   <div class="right"><div class="right-in">
 
     <header class="phead">
-      <span class="avatar sm"><svg aria-hidden="true"><use href="#av-jiho"/></svg></span>
+      <button type="button" class="ring sm story-open" aria-label="jiho.draws 스토리 보기 · View jiho.draws’ story"><span class="avatar sm"><svg aria-hidden="true"><use href="#av-jiho"/></svg></span></button>
       <p class="ph-name"><b>jiho.draws</b> <svg class="badge" role="img" aria-label="Verified"><use href="#i-badge"/></svg> <span class="muted">· 2h</span></p>
       <button type="button" class="more" id="more" aria-haspopup="true" aria-expanded="false" aria-controls="menu" aria-label="More · 더 보기">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="19" cy="12" r="1.9"/></svg>
       </button>
       <div class="menu" id="menu" hidden>
         <button type="button" id="copy">링크 복사 · Copy link</button>
+        <button type="button" id="jihoToggle" hidden>지호의 준비된 답장 켜기 · Ready-made replies: off</button>
         <button type="button" class="warn" id="clear">댓글 모두 지우기 · Clear comments</button>
         <p>수업용으로 만든 가상의 화면이에요.<br>A fictional screen made for a class.</p>
       </div>
@@ -441,13 +542,63 @@
 <p class="note">수업용으로 만든 가상의 화면이에요. 앱과 인물은 실제가 아니에요. · A fictional screen made for a class. The app and the person are not real.</p>
 </div>
 
+<!-- Stories: opened from the ring around the profile picture -->
+<div class="stories" id="stories" role="dialog" aria-modal="true" aria-label="jiho.draws 스토리 · jiho.draws’ story" hidden>
+  <div class="st-card" id="stCard">
+    <div class="st-bars" id="stBars" aria-hidden="true"></div>
+    <div class="st-head">
+      <span class="avatar"><svg aria-hidden="true"><use href="#av-jiho"/></svg></span>
+      <b>jiho.draws</b><span class="t" id="stTime">9h</span>
+      <button type="button" id="stClose" aria-label="Close · 닫기"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+
+    <section class="st" data-time="9h" style="background: linear-gradient(160deg, #23406b, #121a33)">
+      <div class="st-paper"><svg viewBox="0 0 100 100" aria-hidden="true"><use href="#doodle-first"/></svg>DAY 1</div>
+      <h3>3년 전, 첫 그림</h3>
+      <p>그때 팔로워는 12명이었어요.<span class="en">Three years ago, my first drawing. I had 12 followers.</span></p>
+    </section>
+
+    <section class="st" data-time="7h" style="background: linear-gradient(165deg, #3a3fd4, #1a8fc4 70%, #25c3c9)">
+      <div class="st-big"><b>50,000</b><span>followers</span></div>
+      <h3>오늘은 5만 명</h3>
+      <p>숫자를 하루에도 몇 번씩 확인했어요.<span class="en">Now it’s 50K. I checked the number many times a day.</span></p>
+    </section>
+
+    <section class="st" data-time="5h" style="background: linear-gradient(170deg, #1d1b2e, #0f0e17)">
+      <div class="st-notes" aria-hidden="true">
+        <span><svg viewBox="0 0 24 24"><use href="#i-heart"/></svg>1,204 new likes</span>
+        <span>+318 new followers</span>
+        <span>97 new comments</span>
+        <span><svg viewBox="0 0 24 24"><use href="#i-heart"/></svg>2,880 new likes</span>
+      </div>
+      <h3>언제부턴가</h3>
+      <p>내 마음이 온통 여기 가 있었어요.<span class="en">At some point, my whole heart was in here.</span></p>
+    </section>
+
+    <section class="st" data-time="3h" style="background: #1c2150">
+      <svg class="st-art" viewBox="0 0 600 600" preserveAspectRatio="xMidYMax slice" aria-hidden="true"><use href="#art-stairs"/></svg>
+      <div class="st-shade"></div>
+      <h3>기도하는데</h3>
+      <p>하나님이 내려놓으라고 하시는 것 같았어요.<span class="en">While I was praying, I felt God saying: let it go.</span></p>
+    </section>
+
+    <section class="st" data-time="2h" style="background: linear-gradient(170deg, #2b2452, #14122a)">
+      <div class="st-paper last"><svg viewBox="0 0 600 600" aria-hidden="true"><use href="#art-stairs"/></svg>NO. 1096</div>
+      <h3>마지막 그림을 올렸어요</h3>
+      <p>댓글은 다 읽을게요. 고마웠어요.<span class="en">I posted my last drawing. I’ll read every comment. Thank you.</span></p>
+      <button type="button" class="st-cta" id="stCta">댓글 달기 · Leave a comment</button>
+    </section>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 (function () {
   'use strict';
 
-  // Eight anonymous classroom profiles. No sign-up: tap a face, write, post.
+  // Eight anonymous classroom profiles. No sign-up: tap a face, write, post. A comment stores the
+  // animal's number in this list, so the list itself must keep this order.
   var ANIMALS = [
     { name: '토끼',   en: 'rabbit',  face: '🐰', bg: '#ffe1ea' },
     { name: '거북이', en: 'turtle',  face: '🐢', bg: '#d9f2dc' },
@@ -460,11 +611,21 @@
   ];
 
   // Comments that were "already there" from made-up followers; shown when "View all comments" is tapped.
+  // Each gives a different reason: the work, the fans, a break, a "better" plan for God, money, influence,
+  // "God wouldn't ask that", regret, a half-measure, what people think. The last two take God at his word.
   var TOP = [
     { user: 'fan_since_day1', bg: '#ffd9c2', ko: '지우지 마요! 3년이 아깝잖아요.', en: 'Don’t delete it! Three years of work, just gone?', time: '1h', likes: 482 },
-    { user: 'church_friend', bg: '#cfe6ff', ko: '그 계정으로 하나님 일을 하면 되잖아요. 그게 더 낫죠.', en: 'Just use the account for God instead. Isn’t that better?', time: '58m', likes: 317 },
-    { user: 'art_lover', bg: '#dff3c8', ko: '잠깐 쉬었다가 돌아와요. 지울 것까지는 없어요.', en: 'Take a break and come back. You don’t have to delete it.', time: '41m', likes: 265 },
-    { user: 'praying4u', bg: '#f3dcf7', ko: '하나님이 말씀하셨으면 그대로 해요. 기도할게요.', en: 'If God said it, do it. I’m praying for you.', time: '12m', likes: 38 }
+    { user: 'mina.doodles', bg: '#ffe3ef', ko: '저는 매일 아침 지호 님 그림으로 하루를 시작해요. 우리는 어떡해요?', en: 'I start every morning with your drawings. What about us?', time: '1h', likes: 455 },
+    { user: 'art_lover', bg: '#dff3c8', ko: '잠깐 쉬었다가 돌아와요. 지울 것까지는 없어요.', en: 'Take a break and come back. You don’t have to delete it.', time: '58m', likes: 391 },
+    { user: 'church_friend', bg: '#cfe6ff', ko: '그 계정으로 하나님 일을 하면 되잖아요. 그게 더 낫죠.', en: 'Just use the account for God instead. Isn’t that better?', time: '55m', likes: 317 },
+    { user: 'biz.sketch', bg: '#fff0b8', ko: '팔로워 5만이면 이제 그림으로 먹고살 수 있어요. 지금 그만두면 너무 손해예요.', en: 'With 50K followers you can finally make a living from art. Quitting now is a huge loss.', time: '52m', likes: 288 },
+    { user: 'daily_hana', bg: '#d6f1ee', ko: '5만 명에게 좋은 영향을 줄 수 있는 자리잖아요. 그걸 왜 버려요?', en: 'You can do so much good for 50,000 people. Why throw that away?', time: '47m', likes: 264 },
+    { user: 'just.jun', bg: '#e4e0ff', ko: '하나님이 그런 걸 원하실 리 없어요. 재능도 하나님이 주신 거잖아요.', en: 'God would never want that. He gave you this talent.', time: '41m', likes: 251 },
+    { user: 'sora_art', bg: '#ffdcd6', ko: '지우면 다시는 못 돌려요. 나중에 분명 후회할 거예요.', en: 'Once it’s deleted, it’s gone for good. You will regret it.', time: '36m', likes: 203 },
+    { user: 'moonlight.k', bg: '#e6eef8', ko: '비공개로만 돌려 두면 안 돼요? 그럼 아무도 손해 안 보잖아요.', en: 'Can’t you just make it private? Then nobody loses anything.', time: '29m', likes: 176 },
+    { user: 'your_old_friend', bg: '#eadfce', ko: '사람들이 이상하게 볼 거야. 네가 걱정돼서 하는 말이야.', en: 'People will think it’s weird. I’m saying this because I care about you.', time: '24m', likes: 142 },
+    { user: 'praying4u', bg: '#f3dcf7', ko: '하나님이 말씀하셨으면 그대로 해요. 기도할게요.', en: 'If God said it, do it. I’m praying for you.', time: '12m', likes: 38 },
+    { user: 'quiet_reader', bg: '#e3f0d9', ko: '너무 아쉬워요. 그래도 하나님이 하라신 길이면 그게 맞는 길이겠죠.', en: 'I will miss this so much. But if God asked for it, it must be the right way.', time: '9m', likes: 21 }
   ];
 
   var KEY = 'the-last-post.v1';
@@ -502,9 +663,21 @@
 
   // comments: { id, key, who, text, t }. key is the shared id once the comment has reached the database
   // ('' until then); id equals key when there is one. mine / likedC remember this device's own marks.
+  // The row of faces is in a random order on each device (and stays that way there); a new device
+  // starts as the first face in its row.
+  function shuffledOrder() {
+    var a = ANIMALS.map(function (x, i) { return i; });
+    for (var i = a.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1)), t = a[i];
+      a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
+  var firstOrder = shuffledOrder();
   var state = {
-    me: Math.floor(Math.random() * ANIMALS.length), picked: false, comments: [],
-    liked: false, saved: false, following: false, top: false, topLiked: {}, mine: {}, likedC: {}
+    order: firstOrder, me: firstOrder[0], picked: false, comments: [],
+    liked: false, saved: false, following: false, top: false, topLiked: {}, mine: {}, likedC: {},
+    replies: {}, storySeen: false   // replies: comment key -> { text, t }, Jiho's like and answer
   };
 
   function $(id) { return document.getElementById(id); }
@@ -527,12 +700,21 @@
       if (!s || typeof s !== 'object') return;
       if (typeof s.me === 'number' && ANIMALS[Math.floor(s.me)]) state.me = Math.floor(s.me);
       state.picked = !!s.picked;
+      if (Array.isArray(s.order) && s.order.length === ANIMALS.length &&
+          s.order.slice().sort(function (a, b) { return a - b; }).every(function (v, i) { return v === i; })) state.order = s.order.slice();
       if (Array.isArray(s.comments)) {
         state.comments = s.comments.filter(validComment).slice(-MAX_KEEP).map(function (c) {
           return { id: String(c.id), key: typeof c.key === 'string' ? c.key : '', who: c.who, text: c.text.slice(0, MAX_LEN), t: Number(c.t) || Date.now() };
         });
       }
       state.liked = !!s.liked; state.saved = !!s.saved; state.following = !!s.following; state.top = !!s.top;
+      state.storySeen = !!s.storySeen;
+      if (s.replies && typeof s.replies === 'object') {
+        Object.keys(s.replies).slice(0, 400).forEach(function (k) {
+          var r = s.replies[k];
+          if (r && typeof r.text === 'string' && r.text) state.replies[k] = { text: r.text.slice(0, 300), t: Number(r.t) || Date.now() };
+        });
+      }
       ['topLiked', 'mine', 'likedC'].forEach(function (k) {
         if (s[k] && typeof s[k] === 'object') Object.keys(s[k]).slice(0, 600).forEach(function (id) { if (s[k][id]) state[k][id] = true; });
       });
@@ -583,7 +765,8 @@
   function renderWho() {
     var box = $('who');
     box.textContent = '';
-    ANIMALS.forEach(function (a, i) {
+    state.order.forEach(function (i) {
+      var a = ANIMALS[i];
       var b = el('button', 'avatar sm animal', a.face);
       b.type = 'button';
       b.style.background = a.bg;
@@ -672,6 +855,34 @@
         meta.appendChild(del);
       }
       body.appendChild(p); body.appendChild(meta);
+      var answer = c.key ? state.replies[c.key] : null;
+      if (answer) {
+        // Jiho liked it and answered.
+        var by = el('span', 'by');
+        by.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><use href="#i-heart"/></svg>';
+        by.appendChild(document.createTextNode('jiho.draws'));
+        by.title = 'jiho.draws 님이 좋아해요 · Liked by jiho.draws';
+        meta.insertBefore(by, when.nextSibling);
+        var rv = el('div', 'reply');
+        var ra = el('span', 'avatar');
+        ra.innerHTML = '<svg aria-hidden="true"><use href="#av-jiho"/></svg>';
+        var rb = el('div', 'c-body');
+        var rp = el('p');
+        rp.appendChild(el('b', '', 'jiho.draws'));
+        var badge = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        badge.setAttribute('class', 'badge');
+        badge.setAttribute('aria-hidden', 'true');
+        badge.innerHTML = '<use href="#i-badge"/>';
+        rp.appendChild(badge);
+        rp.appendChild(document.createTextNode(' ' + answer.text));
+        var rm = el('p', 'meta');
+        var rw = el('span', 'when', ago(answer.t));
+        rw.setAttribute('data-t', String(answer.t));
+        rm.appendChild(rw);
+        rb.appendChild(rp); rb.appendChild(rm);
+        rv.appendChild(ra); rv.appendChild(rb);
+        body.appendChild(rv);
+      }
       var h = heartButton(!!state.likedC[c.id], 'Like comment · 댓글 좋아요');
       h.addEventListener('click', function () {
         if (state.likedC[c.id]) delete state.likedC[c.id]; else state.likedC[c.id] = true;
@@ -707,6 +918,8 @@
 
   // ----- Sharing comments between devices -----
   var busy = false, live = null, gone = {}, twins = {}, firstPull = true;
+  var REPLIES = DB ? DB + '/lastpost/replies' : '';
+  var repliesOk = true, repliesRetryAt = 0, wrote = {}, replying = {}, firstReplies = true, refused = {}, toldRefused = false;
 
   function request(url, options) {
     var ctl = window.AbortController ? new AbortController() : null;
@@ -751,11 +964,121 @@
     // POST with a method override keeps this a "simple" cross-site request too.
     request(ROOM + '/' + encodeURIComponent(key) + '.json?x-http-method-override=DELETE', { method: 'POST' }).then(function () {}, function () {});
   }
+  function eraseReply(key) {
+    request(REPLIES + '/' + encodeURIComponent(key) + '.json?x-http-method-override=DELETE', { method: 'POST' }).then(function () {}, function () {});
+  }
   function removeComment(c) {
     state.comments = state.comments.filter(function (x) { return x.id !== c.id; });
     delete state.mine[c.id]; delete state.likedC[c.id];
+    var hadReply = c.key && state.replies[c.key];
+    if (hadReply) delete state.replies[c.key];
     save(); renderList();
-    if (ROOM && c.key) [c.key].concat(twins[c.key] || []).forEach(erase);
+    if (ROOM && c.key) {
+      [c.key].concat(twins[c.key] || []).forEach(erase);
+      if (hadReply) eraseReply(c.key);
+    }
+  }
+
+  // ----- Jiho's likes and replies -----
+  // Every screen shows them. They are stored next to the comments, one per comment, and are written
+  // either by tools/jiho-bot.mjs (GPT, run on the teacher's computer: OpenAI does not let a web page
+  // call it directly) or, when the teacher switches it on in the menu, by the teacher's screen with
+  // the ready-made lines below. If the database rules do not allow replies yet, comments still work.
+  var READY = {
+    ko: [
+      [/아깝|아까워|아까운|3년|삼 년|시간/, '맞아요, 3년이라 저도 아까워요. 그래도 내려놓아 보려고요.'],
+      [/돈|수익|손해|광고|먹고살|협찬/, '손해인 건 맞아요. 그래도 손해 안 보는 길이 꼭 맞는 길은 아닌 것 같아요.'],
+      [/하나님|기도|주님|예수|말씀|순종/, '기도해 줘서 고마워요. 저도 계속 기도하고 있어요.'],
+      [/팬|우리|보고 싶|보고싶|그리울|슬퍼|슬프|ㅠ|ㅜ/, '매일 봐 줘서 정말 고마웠어요. 그래서 더 어려운 결정이었어요.'],
+      [/쉬|휴식|비공개|잠깐|돌아와|다시 와/, '쉬는 것도 생각해 봤어요. 그런데 이번엔 다 내려놓으라고 하신 것 같아요.'],
+      [/후회/, '후회할 수도 있겠죠. 그래도 안 따라간 걸 더 후회할 것 같아요.'],
+      [/응원|화이팅|파이팅|힘내|잘했|멋지|멋있|존경/, '응원 고마워요. 큰 힘이 돼요.'],
+      [/왜|이유|진짜|정말|\?/, '저도 오래 고민했어요. 그런데 내 마음이 온통 여기 가 있더라고요.']
+    ],
+    koAny: ['고마워요. 저도 많이 아쉬워요. 그래도 가 보려고요.', '읽고 있어요. 마음 써 줘서 고마워요.', '그 마음 알아요. 그래도 내려놓으라고 하신 걸 따라가 볼게요.'],
+    en: [
+      [/waste|years|time|hard work|worked/i, 'You’re right, three years is a lot. I’m still going to let it go.'],
+      [/money|loss|lose|income|sponsor|living|paid/i, 'It is a loss, yes. But the safe way isn’t always the right way.'],
+      [/god|pray|jesus|lord|faith|obey/i, 'Thank you for praying. I’m still praying too.'],
+      [/miss|fans?\b|\bus\b|sad|cry|love your/i, 'Thank you for being here every day. That’s what made this so hard.'],
+      [/break|private|pause|come back|rest/i, 'I thought about a break too. This time I think I’m asked to let all of it go.'],
+      [/regret/i, 'Maybe I will. I think I’d regret not listening even more.'],
+      [/proud|support|good for you|respect|brave|go for it/i, 'Thank you. That means a lot to me.'],
+      [/why|really|serious|\?/i, 'I thought about it for a long time. My whole heart had ended up in here.']
+    ],
+    enAny: ['Thank you. I’m sad too, but I’m going to go through with it.', 'I’m reading every one of these. Thank you for caring.', 'I know. I still want to follow what I was told.']
+  };
+  function readyReply(text) {
+    var ko = /[ㄱ-힝]/.test(text);
+    var rules = ko ? READY.ko : READY.en, any = ko ? READY.koAny : READY.enAny;
+    for (var i = 0; i < rules.length; i++) if (rules[i][0].test(text)) return rules[i][1];
+    return any[Math.floor(Math.random() * any.length)];
+  }
+
+  var jihoOn = false; // the teacher's switch for ready-made replies (kept on that device)
+  try { jihoOn = teacher && window.localStorage.getItem(KEY + '.jiho') === '1'; } catch (e) { /* off */ }
+
+  function applyReplies(data) {
+    var next = {}, changedKey = '';
+    if (data && typeof data === 'object') {
+      Object.keys(data).forEach(function (k) {
+        var r = data[k];
+        if (r && typeof r.text === 'string' && r.text) next[k] = { text: r.text.slice(0, 300), t: Number(r.t) || Date.now() };
+      });
+    }
+    // A reply this screen wrote a moment ago may be missing from a list that was asked for earlier.
+    Object.keys(state.replies).forEach(function (k) {
+      if (!next[k] && wrote[k] && Date.now() - wrote[k] < 10000) next[k] = state.replies[k];
+    });
+    var a = Object.keys(next), b = Object.keys(state.replies);
+    var changed = a.length !== b.length;
+    a.forEach(function (k) {
+      if (!state.replies[k] || state.replies[k].text !== next[k].text) { changed = true; changedKey = k; }
+    });
+    if (changed) {
+      state.replies = next;
+      save();
+      var typing = document.activeElement === $('input') && $('input').value !== '';
+      var follow = coarse() ? !!state.mine[changedKey] && !typing : true;
+      renderList(null, changedKey && !firstReplies && follow ? changedKey : null);
+    }
+    firstReplies = false;
+  }
+  function pullReplies() {
+    if (!REPLIES || Date.now() < repliesRetryAt) return;
+    request(REPLIES + '.json').then(function (data) {
+      repliesOk = true;
+      applyReplies(data);
+      jihoWork();
+    }, function () { repliesOk = false; repliesRetryAt = Date.now() + 20000; });
+  }
+  // The teacher's screen answers one comment at a time, a moment after it appears.
+  function jihoWork() {
+    if (!teacher || !jihoOn || !live || !repliesOk) return;
+    var c = null;
+    for (var i = 0; i < state.comments.length && !c; i++) {
+      var x = state.comments[i];
+      if (x.key && !state.replies[x.key] && !replying[x.key]) c = x;
+    }
+    if (!c) return;
+    var key = c.key, text = readyReply(c.text);
+    replying[key] = true;
+    setTimeout(function () {
+      if (!jihoOn || state.replies[key]) { delete replying[key]; return; }
+      // Replies are create-only in the rules, so two writers never overwrite each other.
+      request(REPLIES + '/' + encodeURIComponent(key) + '.json?x-http-method-override=PUT', { method: 'POST', body: JSON.stringify({ text: text, t: Date.now() }) }).then(function () {
+        delete replying[key];
+        wrote[key] = Date.now();
+        state.replies[key] = { text: text, t: Date.now() };
+        save(); renderList(null, key);
+        jihoWork();
+      }, function () {
+        // Refused: someone else answered first (it shows up on the next look), or the rules do not allow replies.
+        refused[key] = (refused[key] || 0) + 1;
+        if (refused[key] < 3) { delete replying[key]; return; }
+        if (!toldRefused) { toldRefused = true; toast('답장을 쓸 수 없어요. 데이터베이스 규칙을 확인해 주세요 · Could not write replies'); }
+      });
+    }, 1400 + Math.random() * 1400);
   }
   // started: when the list was asked for. A comment whose sending failed is only sent again after a
   // list asked for later than that failure shows it is really missing (it may have been stored anyway).
@@ -795,8 +1118,8 @@
     });
     // First visit on this device: avoid starting as an animal that is already talking.
     if (firstPull && !state.picked && shared.some(function (c) { return c.who === state.me; })) {
-      var free = ANIMALS.map(function (a, i) { return i; }).filter(function (i) { return !shared.some(function (c) { return c.who === i; }); });
-      if (free.length) { state.me = free[Math.floor(Math.random() * free.length)]; renderWho(); }
+      var free = state.order.filter(function (i) { return !shared.some(function (c) { return c.who === i; }); });
+      if (free.length) { state.me = free[0]; renderWho(); }
     }
     if (changed) {
       state.comments = next;
@@ -811,15 +1134,17 @@
     if (!ROOM || busy || document.hidden) return;
     busy = true;
     var started = Date.now();
-    request(ROOM + '.json').then(function (data) { busy = false; setLive(true); applyShared(data, started); }, function () { busy = false; setLive(false); });
+    request(ROOM + '.json').then(function (data) { busy = false; setLive(true); applyShared(data, started); pullReplies(); }, function () { busy = false; setLive(false); });
   }
   function clearAll() {
     var keys = state.comments.map(function (c) { return c.key; }).filter(Boolean);
-    state.comments = []; state.mine = {}; state.likedC = {}; state.topLiked = {};
-    state.liked = false; state.saved = false; state.following = false; state.top = false;
+    var answered = Object.keys(state.replies);
+    state.comments = []; state.mine = {}; state.likedC = {}; state.topLiked = {}; state.replies = {};
+    state.liked = false; state.saved = false; state.following = false; state.top = false; state.storySeen = false;
     save(); renderAll();
     if (ROOM && live) {
       keys.forEach(function (k) { [k].concat(twins[k] || []).forEach(erase); });
+      answered.forEach(eraseReply);
     }
   }
 
@@ -849,6 +1174,56 @@
     } catch (e) { fallback(); }
   }
 
+  // ----- Stories -----
+  var ST_MS = 7000, stIndex = 0, stTimer = 0, stLeft = 0, stStarted = 0, stDownAt = 0, stFrom = null;
+  function stSlides() { return document.querySelectorAll('#stories .st'); }
+  function stRun() {
+    clearTimeout(stTimer);
+    stStarted = Date.now();
+    $('stories').classList.remove('paused');
+    stTimer = setTimeout(function () { stShow(stIndex + 1); }, stLeft);
+  }
+  function stPause() {
+    clearTimeout(stTimer);
+    stLeft = Math.max(300, stLeft - (Date.now() - stStarted));
+    $('stories').classList.add('paused');
+  }
+  function stShow(i) {
+    var slides = stSlides();
+    if (i >= slides.length) { stClose(); return; }
+    stIndex = Math.max(0, i);
+    Array.prototype.forEach.call(slides, function (sl, k) { sl.classList.toggle('on', k === stIndex); });
+    var bars = $('stBars');
+    bars.textContent = '';
+    for (var k = 0; k < slides.length; k++) {
+      var seg = el('i', k < stIndex ? 'done' : k === stIndex ? 'now' : '');
+      seg.appendChild(el('b'));
+      bars.appendChild(seg);
+    }
+    $('stTime').textContent = slides[stIndex].getAttribute('data-time') || '';
+    stLeft = ST_MS;
+    stRun();
+  }
+  function renderRing() {
+    Array.prototype.forEach.call(document.querySelectorAll('.ring'), function (r) { r.classList.toggle('seen', !!state.storySeen); });
+  }
+  function stOpen() {
+    stFrom = document.activeElement;
+    $('stories').hidden = false;
+    document.body.style.overflow = 'hidden';
+    stShow(0);
+    try { $('stClose').focus({ preventScroll: true }); } catch (e) { /* older browsers */ }
+    state.storySeen = true; save(); renderRing();
+  }
+  function stClose() {
+    clearTimeout(stTimer);
+    stDownAt = 0;
+    $('stories').hidden = true;
+    document.body.style.overflow = '';
+    try { if (stFrom && stFrom.focus) stFrom.focus({ preventScroll: true }); } catch (e) { /* fine */ }
+    stFrom = null;
+  }
+
   // ----- Menu -----
   // While comments are shared, only the teacher's device can clear them all.
   var armed = false;
@@ -858,6 +1233,9 @@
   function renderMenu() {
     $('clear').hidden = !!live && !teacher;
     if (!armed) $('clear').textContent = clearLabel();
+    var jt = $('jihoToggle');
+    jt.hidden = !teacher;
+    jt.textContent = jihoOn ? '지호의 준비된 답장 끄기 · Ready-made replies: on' : '지호의 준비된 답장 켜기 · Ready-made replies: off';
   }
   function closeMenu() {
     $('menu').hidden = true;
@@ -898,12 +1276,47 @@
       clearAll(); closeMenu();
       toast('댓글을 모두 지웠어요 · Comments cleared');
     });
+    $('jihoToggle').addEventListener('click', function () {
+      jihoOn = !jihoOn;
+      try { if (jihoOn) window.localStorage.setItem(KEY + '.jiho', '1'); else window.localStorage.removeItem(KEY + '.jiho'); } catch (e) { /* stays for this visit */ }
+      renderMenu();
+      toast(jihoOn ? '지호가 새 댓글에 답장해요 · Jiho will reply to new comments' : '지호의 답장을 껐어요 · Replies turned off');
+      jihoWork();
+    });
     document.addEventListener('click', closeMenu);
-    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeMenu(); });
+
+    // Stories: open from the ring, tap to move, hold to pause.
+    Array.prototype.forEach.call(document.querySelectorAll('.story-open'), function (b) { b.addEventListener('click', stOpen); });
+    $('stClose').addEventListener('click', stClose);
+    $('stCta').addEventListener('click', function () { stFrom = null; stClose(); $('input').focus(); });
+    $('stories').addEventListener('click', function (e) { if (e.target === this) stClose(); });
+    var card = $('stCard');
+    card.addEventListener('pointerdown', function (e) {
+      if (e.target.closest && e.target.closest('button')) return;
+      stDownAt = Date.now();
+      stPause();
+    });
+    card.addEventListener('pointerup', function (e) {
+      if (!stDownAt) return;
+      var held = Date.now() - stDownAt;
+      stDownAt = 0;
+      if (held > 300) { stRun(); return; }
+      var r = card.getBoundingClientRect();
+      stShow(e.clientX - r.left < r.width * 0.3 ? stIndex - 1 : stIndex + 1);
+    });
+    ['pointercancel', 'pointerleave'].forEach(function (name) {
+      card.addEventListener(name, function () { if (stDownAt) { stDownAt = 0; stRun(); } });
+    });
+    document.addEventListener('keydown', function (e) {
+      if ($('stories').hidden) { if (e.key === 'Escape') closeMenu(); return; }
+      if (e.key === 'Escape') stClose();
+      else if (e.key === 'ArrowRight' || (e.key === ' ' && !(e.target.closest && e.target.closest('button')))) { e.preventDefault(); stShow(stIndex + 1); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); stShow(stIndex - 1); }
+    });
 
     // Keep "now / 3m" labels fresh without redrawing the list.
     setInterval(function () {
-      Array.prototype.forEach.call(document.querySelectorAll('#list .when'), function (n) {
+      Array.prototype.forEach.call(document.querySelectorAll('#list .when'), function (n) { // comments and replies
         n.textContent = ago(Number(n.getAttribute('data-t')));
       });
     }, 30000);
@@ -915,7 +1328,7 @@
     }
   }
 
-  function renderAll() { renderWho(); renderTop(); renderList(); renderPost(); renderMenu(); }
+  function renderAll() { renderWho(); renderTop(); renderList(); renderPost(); renderMenu(); renderRing(); }
 
   // "?reset=1" forgets what this device kept (handy right before class).
   try {
@@ -923,6 +1336,7 @@
   } catch (e) { /* nothing stored */ }
 
   load();
+  save(); // keeps this device's first random order of the faces
   wire();
   renderAll();
   pull();
