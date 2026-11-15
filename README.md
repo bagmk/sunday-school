@@ -13,9 +13,47 @@ A small "app store" of Bible games for a youth Sunday-school class, played toget
 | --- | --- | --- | --- |
 | 마태복음 9:1–8 · Matthew 9:1–8 | 그가 일어나기 전 · Before He Stood | 이야기 게임 (세 인물, 약 20분) | [`apps/before-he-stood/`](apps/before-he-stood/) |
 | 마태복음 14:22–33 · Matthew 14:22–33 | 새벽 3시 · The Fourth Watch | 건너기 게임 (한 사람 60초, 키보드 · 휴대폰) | [`apps/fourth-watch/`](apps/fourth-watch/) |
+| 마태복음 16:21–23 · Matthew 16:21–23 | 마지막 게시물 · The Last Post | 댓글 달기 (수업 도입, 컴퓨터 · 휴대폰, 로그인 없음) | [`apps/the-last-post/`](apps/the-last-post/) |
 
 - **그가 일어나기 전**: 자세한 사용법과 내용 수정 방법은 [`apps/before-he-stood/README.md`](apps/before-he-stood/README.md)에 있어요.
 - **새벽 3시**: 수업용 키보드 버전(`apps/fourth-watch/index.html`, 가로 화면)과 휴대폰 버전(`apps/fourth-watch/mobile.html`, 세로 화면, 스와이프)이 있어요. 둘 다 파일 하나로 되어 있고, 규칙은 같아요. 진행 방법은 아래에 있어요.
+- **마지막 게시물**: 지어낸 앱 「follo」에 지어낸 작가 지호가 올린 글 하나와 댓글 달기예요. 파일 하나(`apps/the-last-post/index.html`)이고, 진행 방법은 아래에 있어요.
+
+## 마지막 게시물 · The Last Post — 진행 (선생님용)
+
+팔로워 5만 명인 작가 지호가 "하나님이 내려놓으라고 하시는 것 같아요. 이 계정을 지우려고 해요"라고 글을 올렸어요. 아이들이 댓글을 달고, 이야기는 선생님이 이끌어요(마 14:21의 오천 명, 마 16:21–23).
+
+- **선생님 컴퓨터:** `apps/the-last-post/index.html?teacher=1`로 한 번 열어요. 그 컴퓨터는 그 뒤로 선생님 화면으로 기억돼요(`?teacher=0`으로 끔). 선생님 화면에서는 어떤 댓글이든 지울 수 있고, `•••` 메뉴에서 모든 기기의 댓글을 한 번에 지울 수 있어요(두 번 눌러야 지워져요).
+- **아이들 휴대폰:** 앱 목록에서 「마지막 게시물」을 눌러요. 로그인은 없어요. 처음 들어오면 동물 하나(토끼, 거북이, 여우, 곰, 고양이, 강아지, 펭귄, 부엉이)가 정해지고, 글 쓰는 칸 위의 얼굴을 누르면 바꿀 수 있어요. 자기가 쓴 댓글만 지울 수 있어요.
+- **컴퓨터 한 대로만 할 때:** 아이들이 돌아가며 얼굴을 눌러 바꾸고 댓글을 써요.
+- **댓글 맞추기:** 댓글은 Firebase Realtime Database(`sunday-school-1ee25`의 `/lastpost/comments`)에 저장되고, 열려 있는 화면들이 2초마다 새 댓글을 가져와요. 오른쪽 위에 `live`(맞춰지는 중)나 `offline`(이 기기에서만)이 보여요. 인터넷이 끊기면 그 기기에서만 보이다가, 다시 이어지면 밀린 댓글이 올라가요.
+- `View all … comments`를 누르면 지어낸 팔로워 댓글 네 개가 펼쳐져요. 필요할 때만 여세요.
+- 주소 끝에 붙일 수 있는 것: `?db=off`(이 기기에서만), `?reset=1`(이 기기에 남은 것 지우고 시작), `?db=https://…`(다른 Realtime Database 주소).
+- 화면의 앱, 인물, 팔로워 댓글은 모두 지어낸 것이에요. 실제 서비스나 사람이 아니에요.
+
+<details>
+<summary>Realtime Database 규칙 (콘솔 → Realtime Database → 규칙)</summary>
+
+댓글 목록 읽기, 새 댓글 쓰기(200자까지), 댓글 지우기만 열려 있어요. 고치기와 다른 경로는 막혀 있어요. 수업이 끝난 뒤 `".read"`를 `false`로 바꾸면 닫혀요.
+
+```json
+{
+  "rules": {
+    "lastpost": {
+      "comments": {
+        ".read": true,
+        "$id": {
+          ".write": "!data.exists() || !newData.exists()",
+          ".validate": "newData.hasChildren(['who', 'text', 't']) && newData.child('who').isNumber() && newData.child('who').val() >= 0 && newData.child('who').val() <= 7 && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 200 && newData.child('t').isNumber()",
+          "$field": { ".validate": "$field == 'who' || $field == 'text' || $field == 't'" }
+        }
+      }
+    }
+  }
+}
+```
+
+</details>
 
 ## 새벽 3시 · The Fourth Watch — 진행 (선생님용)
 
@@ -74,10 +112,11 @@ A small "app store" of Bible games for a youth Sunday-school class, played toget
 index.html                 앱 목록 (첫 화면)
 apps/before-he-stood/      그가 일어나기 전 (이야기 게임, 도구와 테스트 포함)
 apps/fourth-watch/         새벽 3시 (index.html: 키보드 버전, mobile.html: 휴대폰 버전)
+apps/the-last-post/        마지막 게시물 (index.html 하나: 지어낸 앱의 글과 댓글)
 ```
 
 ## 출처
 
 성경 본문: 성경전서 개역개정판 © 대한성서공회. Scripture quotations are from the ESV® Bible (The Holy Bible, English Standard Version®), © 2001 by Crossway, a publishing ministry of Good News Publishers. Used by permission. All rights reserved.
 
-인물의 이름, 가족, 대화와 이야기는 창작이에요.
+인물의 이름, 가족, 대화와 이야기는 창작이에요. 「마지막 게시물」의 앱 follo, 작가 지호, 팔로워와 댓글도 모두 지어낸 것이에요.
