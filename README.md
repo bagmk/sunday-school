@@ -44,7 +44,7 @@ index.html                 앱 목록과 수업 목록 (첫 화면)
 lessons/                   수업별 진행안과 인쇄 자료 (01–06)
 apps/before-he-stood/      그가 일어나기 전 (이야기 게임, 도구와 테스트 포함)
 apps/fourth-watch/         새벽 3시 (index.html: 키보드 버전, mobile.html: 휴대폰 버전)
-apps/the-last-post/        마지막 게시물 (index.html 하나: 지어낸 앱의 글과 댓글)
+apps/the-last-post/        마지막 게시물 (index.html: 지어낸 앱의 글·댓글·스토리, tools/: 답장 프로그램)
 docs/five-criteria.md      수업을 만들 때 보는 다섯 가지
 ```
 
